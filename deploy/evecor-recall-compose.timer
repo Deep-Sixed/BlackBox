@@ -1,0 +1,10 @@
+[Unit]
+Description=Materialize the EVECOR Recall daily digest (Flight Recorder)
+
+[Timer]
+OnCalendar=*-*-* 23:50:00
+OnBootSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
