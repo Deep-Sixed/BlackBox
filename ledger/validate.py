@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import posixpath
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,7 +12,12 @@ from ledger.models import (
     ClaimRecord,
 )
 
-CLAIM_ID_PATTERN = re.compile(r"^clm-\d{4}-\d{4}$")
+# The generator is authoritative: ``repository._prepare_claim`` mints
+# ``clm-<UTC year>-<8 hex>``. The older ``clm-YYYY-NNNN`` sequence form this
+# check used to require was never minted by any writer, so every stored claim
+# failed it. Hand-authored ids (slugs) still warn — that is real signal.
+CLAIM_ID_PATTERN = re.compile(r"^clm-\d{4}-[0-9a-f]{8}$")
+CLAIM_ID_SHAPE = "clm-YYYY-<8 hex>"
 
 
 @dataclass
@@ -50,6 +56,12 @@ _LEGACY_SOURCE_PREFIX_RELOCATIONS = {
     "governance/recon/": "governance/flight-recorder/recon/",
     "governance/recall/storage/recall/archive/": "governance/flight-recorder/storage/archive/",
     "governance/recall/": "governance/flight-recorder/recall/",
+    # EVECOR f059d60a (2026-07-18) "relocate recovery assets to component
+    # owners" moved the per-batch Docker recovery packages out of the shared
+    # ops/ tree and under the component that owns each container.
+    "ops/recovery/docker-environment/2026-07-17/batch-002-contextforge-agentpool/": "gateway/acp-servers/agentpool/recovery/2026-07-17/",
+    "ops/recovery/docker-environment/2026-07-17/batch-003-contextforge-a2a-echo-agent/": "gateway/agents2agents/a2a-echo-agent/recovery/2026-07-17/",
+    "ops/recovery/docker-environment/2026-07-17/batch-004-graphify-core-db/": "data/graphify/recovery/2026-07-17/",
 }
 
 
@@ -91,10 +103,30 @@ def _evidence_roots(repo: Path) -> tuple[Path, ...]:
     return tuple(roots)
 
 
+def _normalized_repo_ref(ref: str) -> str | None:
+    """Collapse ``.``/``..`` segments in a repo-relative ref.
+
+    Returns ``None`` only for the two shapes that genuinely leave the evidence
+    roots: an absolute path, or a ref that still climbs above the root once
+    normalized. An interior ``..`` that lands back inside the tree — for
+    example ``EVECOR/../labs/x`` written by a claim author standing in the
+    EVECOR checkout — is a verbose spelling of a valid ref, not a traversal
+    attempt, and must not be rejected lexically. Containment is still enforced
+    per-root by ``_source_exists``.
+    """
+    if not ref or ref.startswith("/"):
+        return None
+    normalized = posixpath.normpath(ref)
+    if normalized == ".." or normalized.startswith("../") or normalized.startswith("/"):
+        return None
+    return normalized
+
+
 def _source_exists(repo: Path, ref: str) -> bool:
-    path = Path(_canonical_source_ref(ref))
-    if path.is_absolute() or ".." in path.parts:
+    normalized = _normalized_repo_ref(_canonical_source_ref(ref))
+    if normalized is None:
         return False
+    path = Path(normalized)
 
     for root in _evidence_roots(repo):
         candidate = (root / path).resolve()
@@ -123,7 +155,7 @@ def validate_claims(repo: Path, claims: list[ClaimRecord]) -> ValidationReport:
         by_id[claim.id] = claim
 
         if not CLAIM_ID_PATTERN.match(claim.id):
-            report.warnings.append(f"{prefix}id does not match clm-YYYY-NNNN")
+            report.warnings.append(f"{prefix}id does not match {CLAIM_ID_SHAPE}")
 
         if not claim.statement:
             report.errors.append(f"{prefix}missing statement")
@@ -153,7 +185,7 @@ def validate_claims(repo: Path, claims: list[ClaimRecord]) -> ValidationReport:
                 report.errors.append(f"{prefix}source missing ref or quote")
                 continue
             canonical_ref = _canonical_source_ref(source.ref)
-            if canonical_ref.startswith("/") or ".." in Path(canonical_ref).parts:
+            if _normalized_repo_ref(canonical_ref) is None:
                 if source.source_type in _REPO_FILE_SOURCE_TYPES and sources_are_live_evidence:
                     report.errors.append(f"{prefix}source ref escapes repo: {source.ref}")
                 else:
@@ -171,7 +203,7 @@ def validate_claims(repo: Path, claims: list[ClaimRecord]) -> ValidationReport:
                 report.errors.append(f"{prefix}source hash must use sha256: prefix")
 
         if claim.source_ref:
-            if claim.source_ref.startswith("/") or ".." in Path(claim.source_ref).parts:
+            if _normalized_repo_ref(claim.source_ref) is None:
                 report.errors.append(f"{prefix}source_ref escapes repo: {claim.source_ref}")
             if claim.source_type and not claim.source_type.strip():
                 report.errors.append(f"{prefix}source_type cannot be blank when source_ref is set")

@@ -507,3 +507,58 @@ def test_mcp_server_registers_six_ledger_tools() -> None:
     identity_params = {"agent", "agent_identity", "user", "user_identity", "surface", "session_id"}
     for tool in tools:
         assert not identity_params & set(tool.inputSchema.get("properties", {}))
+
+
+def test_validator_accepts_interior_parent_segment_that_lands_inside_a_root(tmp_path: Path) -> None:
+    """``EVECOR/../labs/x`` normalizes back inside the projects root.
+
+    Claim authors standing in the EVECOR checkout wrote sibling-tree evidence
+    this way. Rejecting it lexically flagged a real, resolvable file as a
+    traversal attempt.
+    """
+    store = tmp_path / "EVECOR" / "governance" / "flight-recorder" / "storage" / "ledger-test"
+    sibling = tmp_path / "labs" / "cerberus" / "deploy" / "admin-sso-setup.md"
+    sibling.parent.mkdir(parents=True)
+    sibling.write_text("evidence", encoding="utf-8")
+    claim = _claim("clm-2026-1001")
+    claim.source_ref = None
+    claim.sources = [
+        SourceRef(
+            ref="EVECOR/../labs/cerberus/deploy/admin-sso-setup.md",
+            quote="evidence",
+            source_type="repo-file",
+        )
+    ]
+    add_claim(store, claim)
+
+    report = validate_claims(store, load_claims(store))
+
+    assert report.ok, report.errors
+    assert not any("escapes repo" in warning for warning in report.warnings)
+
+
+def test_validator_still_rejects_refs_that_climb_above_every_root(tmp_path: Path) -> None:
+    store = tmp_path / "EVECOR" / "governance" / "flight-recorder" / "storage" / "ledger-test"
+    claim = _claim("clm-2026-1001")
+    claim.source_ref = None
+    claim.sources = [
+        SourceRef(ref="EVECOR/../../escape.md", quote="evidence", source_type="repo-file")
+    ]
+    add_claim(store, claim)
+
+    report = validate_claims(store, load_claims(store))
+
+    assert not report.ok
+    assert any("source ref escapes repo" in error for error in report.errors)
+
+
+def test_validator_accepts_the_id_shape_the_generator_actually_mints(tmp_path: Path) -> None:
+    minted = _claim("clm-2026-14f24faf")
+    add_claim(tmp_path, minted)
+    hand_authored = _claim("clm-2026-phase01b-freeze", "Hand-authored slug id")
+    add_claim(tmp_path, hand_authored)
+
+    report = validate_claims(tmp_path, load_claims(tmp_path))
+    id_warnings = [w for w in report.warnings if "id does not match" in w]
+
+    assert id_warnings == ["clm-2026-phase01b-freeze: id does not match clm-YYYY-<8 hex>"]
