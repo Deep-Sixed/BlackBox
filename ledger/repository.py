@@ -304,12 +304,10 @@ def _format_scalar(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return str(value)
-    text = str(value)
-    if not text:
-        return '""'
-    if re.fullmatch(r"[A-Za-z0-9_.:/@+-]+", text):
-        return text
-    return json.dumps(text, ensure_ascii=False)
+    # JSON strings are valid YAML double-quoted scalars. Always quote strings so
+    # YAML cannot coerce evidence such as "yes", "12", or "2026-08-08" into a
+    # bool, number, or date, and cannot interpret "-" as sequence syntax.
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 def _find_claim(repo: Path, claim_id: str) -> ClaimRecord | None:

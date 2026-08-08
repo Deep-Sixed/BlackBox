@@ -5,15 +5,56 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ledger.gateway import _receipt_from_body, app
 from ledger.models import SourceRef
 from ledger.parse import claim_from_mapping, parse_claim_file
-from ledger.repository import add_claim, claim_path, claims_dir, contest, load_claims, receipts_jsonl, supersede
+from ledger.repository import (
+    _format_scalar,
+    add_claim,
+    claim_path,
+    claims_dir,
+    contest,
+    load_claims,
+    receipts_jsonl,
+    supersede,
+)
 from ledger.search import search_claims
 from ledger.validate import validate_claims
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "ledger_pluto"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "yes",
+        "no",
+        "on",
+        "off",
+        "true",
+        "false",
+        "null",
+        "~",
+        "12",
+        "1.0",
+        "0x1F",
+        ".inf",
+        ".nan",
+        "-",
+        "2026-08-08",
+        "build:",
+        "https://example.test/a",
+        "evidence with spaces",
+    ],
+)
+def test_format_scalar_preserves_strings_through_standard_yaml(value: str) -> None:
+    parsed = yaml.safe_load(f"value: {_format_scalar(value)}\n")["value"]
+
+    assert isinstance(parsed, str)
+    assert parsed == value
 
 
 def test_pluto_fixture_loads_four_claims() -> None:
