@@ -1,0 +1,25 @@
+[Unit]
+Description=EVECOR Flight Recorder — Ledger gateway, cpex tool_post_invoke observer (port 8774)
+Documentation=file:///mnt/jarvis-data/projects/EVECOR/governance/flight-recorder/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/jarvis-data/projects/EVECOR/governance/flight-recorder
+Environment=FLIGHT_RECORDER_STORE=/mnt/jarvis-data/projects/EVECOR/governance/flight-recorder/storage
+Environment=LEDGER_REPO_ROOT=/mnt/jarvis-data/projects/EVECOR/governance/flight-recorder/storage
+ExecStart=/mnt/jarvis-data/projects/EVECOR/governance/flight-recorder/.venv/bin/uvicorn \
+    ledger.gateway:app \
+    --host 127.0.0.1 \
+    --port 8774 \
+    --log-level warning
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+SyslogIdentifier=evecor-ledger-gateway
+
+[Install]
+WantedBy=default.target
