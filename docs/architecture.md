@@ -27,3 +27,7 @@ never source records.
 The Python library and CLI are the initial API. HTTP, MCP deployment, production
 data conversion, retention/deletion, external authentication, and EVECOR cutover
 are separate work. No legacy client compatibility is promised.
+
+Schema v2 adds atomic forward migration from released v1 databases and chained
+receipts for all canonical record types. Read-only handles never migrate. See the
+[SQLite contract](sqlite-contract.md) for validation, ordering and threat limits.

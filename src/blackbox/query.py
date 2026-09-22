@@ -1,12 +1,13 @@
 """Read-only reconstruction; derived views do not mutate canonical records."""
 
-import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 from .db import connect
 from .ingest import state
-from .models import canonical
+from .integrity import evidence_errors, record_errors
+from .schema import VERSION
 
 
 def reconstruct(database: str | Path, session: str) -> dict:
@@ -95,34 +96,17 @@ def claims(
 
 
 def integrity(database: str | Path) -> dict:
-    connection = connect(database, readonly=True)
+    try:
+        connection = connect(database, readonly=True)
+    except ValueError:
+        return {"ok": False, "schema_version": None, "errors": ["schema_integrity"]}
+    except sqlite3.Error, OSError:
+        return {"ok": False, "schema_version": None, "errors": ["database_unavailable"]}
     try:
         connection.execute("BEGIN")
-        errors = []
-        if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
-            errors.append("sqlite_integrity")
-        if connection.execute("PRAGMA foreign_key_check").fetchall():
-            errors.append("foreign_keys")
-        observations = connection.execute(
-            "SELECT count(*) FROM observations"
-        ).fetchone()[0]
-        evidence = connection.execute("SELECT count(*) FROM evidence").fetchone()[0]
-        if observations != evidence:
-            errors.append("receipt_coverage")
-        for row in connection.execute(
-            "SELECT o.*,e.digest FROM observations o JOIN evidence e ON e.observation_id=o.id"
-        ):
-            material = {
-                "session": row["session_id"],
-                "source": row["source_id"],
-                "kind": row["kind"],
-                "data": json.loads(row["data"]),
-            }
-            if (
-                hashlib.sha256(canonical(material).encode()).hexdigest()
-                != row["digest"]
-            ):
-                errors.append("receipt_integrity")
-        return {"ok": not errors, "errors": errors}
+        errors = evidence_errors(connection) | record_errors(connection)
+        return {"ok": not errors, "schema_version": VERSION, "errors": sorted(errors)}
+    except sqlite3.Error:
+        return {"ok": False, "schema_version": VERSION, "errors": ["sqlite_integrity"]}
     finally:
         connection.close()

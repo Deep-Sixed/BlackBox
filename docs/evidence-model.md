@@ -8,8 +8,9 @@ claimed, observed, and referenced without upgrading source authority by accident
 - Claim: a caller-asserted statement about a topic.
 - Observation: a bounded event or activity record, either caller asserted or
   locally observed by a built-in BlackBox observer.
-- Receipt: a deterministic digest over the stored observation material.
-- Integrity: whether stored bytes still match their recorded receipt and SQLite
+- Receipt: a deterministic digest over explicit canonical record material;
+  observation evidence retains its original receipt and v2 adds a record chain.
+- Integrity: whether canonical records still match their recorded receipts and SQLite
   constraints.
 - Authority: who supplied the record, such as `caller_asserted` or `local_git`.
 - Verification: what BlackBox can say about an observation, currently
@@ -21,8 +22,8 @@ claimed, observed, and referenced without upgrading source authority by accident
 
 Hash integrity is not observer authority.
 
-A receipt proves only that the stored observation still matches the bytes
-BlackBox committed. It does not prove that the caller's statement is true, that a
+A matching receipt establishes consistency with locally recorded canonical
+material, subject to the [SQLite threat model](sqlite-contract.md). It does not prove that the caller's statement is true, that a
 remote system authenticated it, or that downstream analysis verified it.
 
 Likewise, a local observer marks only the specific metadata it observed. A caller

@@ -51,7 +51,7 @@ def test_valid_existing_database_keeps_required_pragmas(tmp_path, capture_reques
         assert readonly.execute("PRAGMA query_only").fetchone()[0] == 1
     finally:
         readonly.close()
-    assert integrity(database) == {"ok": True, "errors": []}
+    assert integrity(database) == {"ok": True, "schema_version": VERSION, "errors": []}
 
 
 def test_wrong_application_id_is_rejected(tmp_path):

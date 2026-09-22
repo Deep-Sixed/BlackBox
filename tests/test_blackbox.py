@@ -86,7 +86,7 @@ def test_migration_empty_database_and_reopen(database):
     connection.close()
     connect(database).close()
     assert database.stat().st_mode & 0o777 == 0o600
-    assert integrity(database) == {"ok": True, "errors": []}
+    assert integrity(database) == {"ok": True, "schema_version": VERSION, "errors": []}
 
 
 def test_capture_reconstruction_and_dedup(database, capture_request):
