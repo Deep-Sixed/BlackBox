@@ -1,0 +1,212 @@
+"""Transactional capture with append-only lifecycle and correction records."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+from .db import connect, now, transaction
+from .models import Capture, Claim, canonical, identity
+from .provenance import collect_git
+
+LIFECYCLE = ("RESERVED", "COMMITTED", "FAILED_RETRYABLE")
+
+
+def event(connection, session: str, kind: str, entity: str) -> str:
+    ordinal = connection.execute(
+        "SELECT count(*) FROM events WHERE session_id=?", (session,)
+    ).fetchone()[0]
+    key = identity("evt", [session, ordinal, kind, entity])
+    connection.execute(
+        "INSERT INTO events(id,session_id,kind,entity_id,recorded_at) VALUES (?,?,?,?,?)",
+        (key, session, kind, entity, now()),
+    )
+    return key
+
+
+def state(connection, session: str) -> str | None:
+    row = connection.execute(
+        "SELECT kind FROM events WHERE session_id=? AND kind IN (?,?,?) "
+        "ORDER BY sequence DESC LIMIT 1",
+        (session, *LIFECYCLE),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def source(connection, session: str, name: str, authority: str) -> str:
+    key = identity("src", [session, name, authority])
+    connection.execute(
+        "INSERT INTO sources VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING",
+        (key, session, name, authority),
+    )
+    return key
+
+
+def observation(
+    connection,
+    session: str,
+    source_id: str,
+    kind: str,
+    data: dict,
+    *,
+    local: bool = False,
+) -> str:
+    material = {"session": session, "source": source_id, "kind": kind, "data": data}
+    key = identity("obs", material)
+    cursor = connection.execute(
+        "INSERT INTO observations VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+        (key, session, source_id, kind, canonical(data), now()),
+    )
+    if cursor.rowcount:
+        digest = hashlib.sha256(canonical(material).encode()).hexdigest()
+        evidence_id = identity("evd", [key, digest])
+        connection.execute(
+            "INSERT INTO evidence VALUES (?,?,?,?)",
+            (evidence_id, key, digest, "locally_observed" if local else "unverified"),
+        )
+        event(connection, session, "OBSERVATION", key)
+    return key
+
+
+def claim_row(
+    connection,
+    session: str,
+    claim: Claim,
+    target: str | None = None,
+    relation: str | None = None,
+) -> str:
+    if target is not None:
+        row = connection.execute(
+            "SELECT session_id FROM claims WHERE id=?", (target,)
+        ).fetchone()
+        if row is None or row["session_id"] != session:
+            raise ValueError("correction target must belong to the session")
+    source_id = source(connection, session, claim.source, "caller_asserted")
+    key = identity("clm", [session, claim.model_dump(), target, relation])
+    cursor = connection.execute(
+        "INSERT INTO claims VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+        (key, session, source_id, claim.topic, claim.statement, target, relation),
+    )
+    if cursor.rowcount:
+        event(connection, session, "CLAIM", key)
+    return key
+
+
+def ingest(
+    database: str | Path,
+    capture: Capture | dict,
+    *,
+    repo: str | Path | None = None,
+    baseline: str | None = None,
+) -> dict:
+    # Revalidate even model instances: do not trust model_construct or mutable lists.
+    capture = Capture.model_validate(
+        capture.model_dump() if isinstance(capture, Capture) else capture
+    )
+    if baseline is not None and repo is None:
+        raise ValueError("baseline requires a repository")
+    request = capture.model_dump(mode="json")
+    locator = str(Path(repo).expanduser().resolve()) if repo is not None else None
+    fingerprint = identity("input", [request, locator, baseline])
+    session = identity("ses", capture.request_id)
+    connection = connect(database)
+    try:
+        with transaction(connection):
+            existing = connection.execute(
+                "SELECT fingerprint FROM sessions WHERE id=?", (session,)
+            ).fetchone()
+            if existing is not None and existing[0] != fingerprint:
+                raise ValueError("request ID already binds different input")
+            if existing is None:
+                connection.execute(
+                    "INSERT INTO sessions VALUES (?,?,?,?,?)",
+                    (session, capture.request_id, fingerprint, capture.producer, now()),
+                )
+                event(connection, session, "RESERVED", session)
+        try:
+            with transaction(connection):
+                if state(connection, session) == "COMMITTED":
+                    return {
+                        "session_id": session,
+                        "status": "COMMITTED",
+                        "duplicate": True,
+                    }
+                # The write lock serializes capture/retry for this local database.
+                if repo is not None:
+                    data = collect_git(repo, baseline)
+                    source_id = source(connection, session, "blackbox.git", "local_git")
+                    observation(connection, session, source_id, "git", data, local=True)
+                for item in capture.observations:
+                    source_id = source(
+                        connection, session, item.source, "caller_asserted"
+                    )
+                    observation(
+                        connection,
+                        session,
+                        source_id,
+                        item.kind,
+                        item.model_dump(mode="json"),
+                    )
+                for item in capture.claims:
+                    claim_row(connection, session, item)
+                for item in capture.artifacts:
+                    source_id = source(
+                        connection, session, item.source, "caller_asserted"
+                    )
+                    key = identity("art", [session, item.model_dump()])
+                    cursor = connection.execute(
+                        "INSERT INTO artifacts VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                        (key, session, source_id, item.path, item.digest, "unverified"),
+                    )
+                    if cursor.rowcount:
+                        event(connection, session, "ARTIFACT", key)
+                event(connection, session, "COMMITTED", session)
+        except Exception:
+            # No exception message, raw stdout, environment, or input is persisted.
+            # If even this transaction fails, RESERVED still supports a retry.
+            with transaction(connection):
+                if state(connection, session) != "COMMITTED":
+                    failure_event = event(
+                        connection, session, "FAILED_RETRYABLE", session
+                    )
+                    connection.execute(
+                        "INSERT INTO failures VALUES (?,?,?,?,?)",
+                        (
+                            identity("fail", failure_event),
+                            session,
+                            failure_event,
+                            "CAPTURE_FAILED",
+                            1,
+                        ),
+                    )
+            raise
+        return {"session_id": session, "status": "COMMITTED", "duplicate": False}
+    finally:
+        connection.close()
+
+
+def append_claim(
+    database: str | Path,
+    session: str,
+    claim: Claim | dict,
+    *,
+    target: str | None = None,
+    relation: str | None = None,
+) -> str:
+    claim = Claim.model_validate(
+        claim.model_dump() if isinstance(claim, Claim) else claim
+    )
+    if (target is None) != (relation is None) or relation not in (
+        None,
+        "supersedes",
+        "contests",
+    ):
+        raise ValueError("correction requires a target and supported relation")
+    connection = connect(database)
+    try:
+        with transaction(connection):
+            if state(connection, session) != "COMMITTED":
+                raise ValueError("claim requires a committed session")
+            return claim_row(connection, session, claim, target, relation)
+    finally:
+        connection.close()

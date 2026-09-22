@@ -21,8 +21,8 @@ the trust boundary; arbitrary code with database-file access is outside this mod
 
 Corrections and contests insert linked claims. The original claim is immutable.
 Only one superseding successor is permitted. A chronological event sequence and
-UTC recording times support reconstruction. Claimed occurrence times remain distinct
-from recording times. Derived summaries are read-only views, never source records.
+UTC recording times support reconstruction. Derived summaries are read-only views,
+never source records.
 
 The Python library and CLI are the initial API. HTTP, MCP deployment, production
 data conversion, retention/deletion, external authentication, and EVECOR cutover

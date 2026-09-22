@@ -1,0 +1,106 @@
+"""Private local database, durable transactions, and strictly read-only queries."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import sqlite3
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+
+from .models import canonical
+from .schema import APPLICATION_ID, DDL, VERSION
+
+
+def now() -> str:
+    return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
+def schema_digest() -> str:
+    return hashlib.sha256(canonical(DDL).encode()).hexdigest()
+
+
+def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
+    path = Path(path).expanduser().absolute()
+    if path.is_symlink():
+        raise ValueError("database symlinks are not supported")
+    if not readonly:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            os.close(fd)
+        if path.stat().st_mode & 0o077:
+            raise ValueError("database must have private permissions (0600)")
+    connection = sqlite3.connect(
+        path.as_uri() + ("?mode=ro" if readonly else "?mode=rw"),
+        uri=True,
+        timeout=5,
+        isolation_level=None,
+    )
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA busy_timeout=5000")
+        if readonly:
+            connection.execute("PRAGMA query_only=ON")
+            verify_schema(connection)
+        else:
+            application = connection.execute("PRAGMA application_id").fetchone()[0]
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if application not in (0, APPLICATION_ID) or version not in (0, VERSION):
+                raise ValueError("unsupported database identity or schema version")
+            if (
+                application == 0
+                and connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1"
+                ).fetchone()
+            ):
+                raise ValueError("refusing to adopt a non-BlackBox database")
+            if connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
+                raise ValueError("WAL mode unavailable")
+            connection.execute("PRAGMA synchronous=FULL")
+            with transaction(connection):
+                # Recheck under the write lock: another initializer may have won.
+                if connection.execute("PRAGMA user_version").fetchone()[0] == 0:
+                    for statement in DDL:
+                        connection.execute(statement)
+                    connection.execute(
+                        "INSERT INTO schema_metadata VALUES (?, ?, ?)",
+                        (VERSION, now(), schema_digest()),
+                    )
+                    connection.execute(f"PRAGMA application_id={APPLICATION_ID}")
+                    connection.execute(f"PRAGMA user_version={VERSION}")
+            verify_schema(connection)
+        return connection
+    except BaseException:
+        connection.close()
+        raise
+
+
+def verify_schema(connection: sqlite3.Connection) -> None:
+    if (
+        connection.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID
+        or connection.execute("PRAGMA user_version").fetchone()[0] != VERSION
+    ):
+        raise ValueError("unsupported database identity or schema version")
+    row = connection.execute(
+        "SELECT schema_digest FROM schema_metadata WHERE version=?", (VERSION,)
+    ).fetchone()
+    if row is None or row[0] != schema_digest():
+        raise ValueError("schema migration digest mismatch")
+
+
+@contextmanager
+def transaction(connection: sqlite3.Connection):
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+        connection.execute("COMMIT")
+    except BaseException:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise
