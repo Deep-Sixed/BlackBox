@@ -2,23 +2,20 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .models import canonical
-from .schema import APPLICATION_ID, DDL, VERSION
+from .migrations import DEFINITIONS, install, schema_digest, validate
+from .schema import APPLICATION_ID, VERSION
+
+__all__ = ["connect", "now", "schema_digest", "transaction", "verify_schema"]
 
 
 def now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
-
-
-def schema_digest() -> str:
-    return hashlib.sha256(canonical(DDL).encode()).hexdigest()
 
 
 def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
@@ -51,7 +48,7 @@ def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
         else:
             application = connection.execute("PRAGMA application_id").fetchone()[0]
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if application not in (0, APPLICATION_ID) or version not in (0, VERSION):
+            if application not in (0, APPLICATION_ID) or version not in (0, *DEFINITIONS):
                 raise ValueError("unsupported database identity or schema version")
             if (
                 application == 0
@@ -64,16 +61,7 @@ def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
                 raise ValueError("WAL mode unavailable")
             connection.execute("PRAGMA synchronous=FULL")
             with transaction(connection):
-                # Recheck under the write lock: another initializer may have won.
-                if connection.execute("PRAGMA user_version").fetchone()[0] == 0:
-                    for statement in DDL:
-                        connection.execute(statement)
-                    connection.execute(
-                        "INSERT INTO schema_metadata VALUES (?, ?, ?)",
-                        (VERSION, now(), schema_digest()),
-                    )
-                    connection.execute(f"PRAGMA application_id={APPLICATION_ID}")
-                    connection.execute(f"PRAGMA user_version={VERSION}")
+                install(connection, now())
             verify_schema(connection)
         return connection
     except BaseException:
@@ -82,16 +70,14 @@ def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
 
 
 def verify_schema(connection: sqlite3.Connection) -> None:
+    if connection.execute("PRAGMA user_version").fetchone()[0] == 1:
+        raise ValueError("schema migration required; use a writer initialization")
     if (
         connection.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID
         or connection.execute("PRAGMA user_version").fetchone()[0] != VERSION
     ):
         raise ValueError("unsupported database identity or schema version")
-    row = connection.execute(
-        "SELECT schema_digest FROM schema_metadata WHERE version=?", (VERSION,)
-    ).fetchone()
-    if row is None or row[0] != schema_digest():
-        raise ValueError("schema migration digest mismatch")
+    validate(connection, VERSION)
 
 
 @contextmanager

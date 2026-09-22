@@ -6,6 +6,7 @@ import hashlib
 from pathlib import Path
 
 from .db import connect, now, transaction
+from .integrity import append_receipt
 from .models import Capture, Claim, canonical, identity
 from .provenance import collect_git
 
@@ -21,6 +22,7 @@ def event(connection, session: str, kind: str, entity: str) -> str:
         "INSERT INTO events(id,session_id,kind,entity_id,recorded_at) VALUES (?,?,?,?,?)",
         (key, session, kind, entity, now()),
     )
+    append_receipt(connection, "events", key)
     return key
 
 
@@ -35,10 +37,12 @@ def state(connection, session: str) -> str | None:
 
 def source(connection, session: str, name: str, authority: str) -> str:
     key = identity("src", [session, name, authority])
-    connection.execute(
+    cursor = connection.execute(
         "INSERT INTO sources VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING",
         (key, session, name, authority),
     )
+    if cursor.rowcount:
+        append_receipt(connection, "sources", key)
     return key
 
 
@@ -58,12 +62,14 @@ def observation(
         (key, session, source_id, kind, canonical(data), now()),
     )
     if cursor.rowcount:
+        append_receipt(connection, "observations", key)
         digest = hashlib.sha256(canonical(material).encode()).hexdigest()
         evidence_id = identity("evd", [key, digest])
         connection.execute(
             "INSERT INTO evidence VALUES (?,?,?,?)",
             (evidence_id, key, digest, "locally_observed" if local else "unverified"),
         )
+        append_receipt(connection, "evidence", evidence_id)
         event(connection, session, "OBSERVATION", key)
     return key
 
@@ -88,6 +94,7 @@ def claim_row(
         (key, session, source_id, claim.topic, claim.statement, target, relation),
     )
     if cursor.rowcount:
+        append_receipt(connection, "claims", key)
         event(connection, session, "CLAIM", key)
     return key
 
@@ -122,6 +129,7 @@ def ingest(
                     "INSERT INTO sessions VALUES (?,?,?,?,?)",
                     (session, capture.request_id, fingerprint, capture.producer, now()),
                 )
+                append_receipt(connection, "sessions", session)
                 event(connection, session, "RESERVED", session)
         try:
             with transaction(connection):
@@ -159,6 +167,7 @@ def ingest(
                         (key, session, source_id, item.path, item.digest, "unverified"),
                     )
                     if cursor.rowcount:
+                        append_receipt(connection, "artifacts", key)
                         event(connection, session, "ARTIFACT", key)
                 event(connection, session, "COMMITTED", session)
         except Exception:
@@ -178,6 +187,9 @@ def ingest(
                             "CAPTURE_FAILED",
                             1,
                         ),
+                    )
+                    append_receipt(
+                        connection, "failures", identity("fail", failure_event)
                     )
             raise
         return {"session_id": session, "status": "COMMITTED", "duplicate": False}
