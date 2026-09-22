@@ -1,6 +1,6 @@
 [project]
-name = "flight-recorder"
-version = "1.0.0"
+name = "blackbox"
+version = "0.1.0"
 description = "EVECOR flight-recorder software group — Ledger (claims), Recon (session evidence), Recall (derived memory)"
 readme = "README.md"
 requires-python = ">=3.14"
