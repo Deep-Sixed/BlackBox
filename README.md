@@ -45,3 +45,7 @@ Recorder operational evidence or historical runtime artifacts.
 
 See [docs/provenance.md](docs/provenance.md) for the measured tree hashes,
 excluded paths, SHA-256 digests, and donor-to-published history mapping.
+
+See [docs/evidence-model.md](docs/evidence-model.md) for the claim,
+observation, receipt, integrity, authority, verification and provenance
+vocabulary used by the native BlackBox contract.

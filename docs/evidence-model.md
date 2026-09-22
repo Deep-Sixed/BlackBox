@@ -1,0 +1,34 @@
+# Evidence model
+
+BlackBox records bounded metadata so later readers can reconstruct what was
+claimed, observed, and referenced without upgrading source authority by accident.
+
+## Terms
+
+- Claim: a caller-asserted statement about a topic.
+- Observation: a bounded event or activity record, either caller asserted or
+  locally observed by a built-in BlackBox observer.
+- Receipt: a deterministic digest over the stored observation material.
+- Integrity: whether stored bytes still match their recorded receipt and SQLite
+  constraints.
+- Authority: who supplied the record, such as `caller_asserted` or `local_git`.
+- Verification: what BlackBox can say about an observation, currently
+  `unverified` or `locally_observed`.
+- Provenance: the metadata needed to explain where a record came from and how it
+  relates to repository state.
+
+## Invariant
+
+Hash integrity is not observer authority.
+
+A receipt proves only that the stored observation still matches the bytes
+BlackBox committed. It does not prove that the caller's statement is true, that a
+remote system authenticated it, or that downstream analysis verified it.
+
+Likewise, a local observer marks only the specific metadata it observed. A caller
+cannot obtain `local_git` authority by naming its source `blackbox.git`; caller
+input remains `caller_asserted` and its evidence remains `unverified`.
+
+Derived views such as timelines, active claim status, reconstruction, and
+integrity checks are interpretations over immutable rows. They do not create new
+source records and do not change authority.
