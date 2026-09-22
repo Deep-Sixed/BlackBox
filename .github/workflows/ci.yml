@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -34,3 +36,9 @@ jobs:
 
       - name: Run tests
         run: uv run --frozen pytest tests -q
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Installed wheel smoke
+        run: uv run --frozen python tests/wheel_smoke.py dist/*.whl
