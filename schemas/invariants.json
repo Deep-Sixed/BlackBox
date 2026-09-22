@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "invariants": {
+    "observation_vs_interpretation": "Observations and claims are stored separately.",
+    "claims_vs_evidence": "Caller assertions never become independently verified evidence.",
+    "source_provenance": "Every observation has an explicit source and authority classification.",
+    "chronology": "Recording order is reconstructable with monotonic events and UTC times.",
+    "stable_identity": "Canonical content and request identity produce deterministic IDs.",
+    "immutable_history": "Corrections append relationships; historical rows cannot be updated or deleted.",
+    "partial_capture": "Reserved and failed attempts remain visible and retryable.",
+    "derived_authority": "Derived consumers cannot upgrade source authority.",
+    "source_vs_runtime": "Database and runtime artifacts are excluded from Git.",
+    "no_governance": "BlackBox records evidence and never approves or blocks observed actions."
+  }
+}
