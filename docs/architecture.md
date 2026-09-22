@@ -31,3 +31,8 @@ are separate work. No legacy client compatibility is promised.
 Schema v2 adds atomic forward migration from released v1 databases and chained
 receipts for all canonical record types. Read-only handles never migrate. See the
 [SQLite contract](sqlite-contract.md) for validation, ordering and threat limits.
+
+The [public API](public-api.md) is the consumer boundary. It accepts validated
+input mappings and returns detached, frozen typed views. Storage handles,
+transaction helpers and migration functions stay internal. The CLI uses this
+same boundary; expected implementation failures become bounded BlackBox errors.

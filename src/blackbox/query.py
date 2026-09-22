@@ -4,6 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from ._signals import EvidenceIssue, MissingRecord
 from .db import connect
 from .ingest import state
 from .integrity import evidence_errors, record_errors
@@ -18,7 +19,7 @@ def reconstruct(database: str | Path, session: str) -> dict:
             "SELECT * FROM sessions WHERE id=?", (session,)
         ).fetchone()
         if row is None:
-            raise ValueError("unknown session")
+            raise MissingRecord("unknown session")
         result = {"session": dict(row), "status": state(connection, session)}
         for table in (
             "sources",
@@ -45,7 +46,10 @@ def reconstruct(database: str | Path, session: str) -> dict:
             )
         ]
         for row in result["observations"]:
-            row["data"] = json.loads(row["data"])
+            try:
+                row["data"] = json.loads(row["data"])
+            except ValueError, TypeError:
+                raise EvidenceIssue("invalid stored observation") from None
         return result
     finally:
         connection.close()

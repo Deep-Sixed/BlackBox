@@ -1,6 +1,8 @@
 """Exercise the distribution outside the source checkout and development venv."""
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,6 +26,24 @@ def main(wheel):
                 str(environment / "bin/python"),
                 str(wheel),
             ],
+            check=True,
+        )
+        consumer = root / "consumer.py"
+        shutil.copyfile(Path(__file__).with_name("public_consumer.py"), consumer)
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in ("PYTHONPATH", "VIRTUAL_ENV")
+        }
+        subprocess.run(
+            [
+                str(environment / "bin/python"),
+                "-I",
+                str(consumer),
+                str(root / "consumer.sqlite3"),
+            ],
+            cwd=root,
+            env=env,
             check=True,
         )
         cli = environment / "bin/blackbox"

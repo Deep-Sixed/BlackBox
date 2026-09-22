@@ -3,6 +3,7 @@ import sqlite3
 
 import pytest
 
+import blackbox
 from blackbox.db import connect
 from blackbox.ingest import ingest
 from blackbox.query import integrity
@@ -71,8 +72,10 @@ def test_failure_integrity(tmp_path, monkeypatch):
         raise OSError("synthetic")
 
     monkeypatch.setattr(module, "collect_git", fail)
-    with pytest.raises(OSError):
-        ingest(path, {"request_id": "failure", "producer": "test"}, repo=tmp_path)
+    with pytest.raises(blackbox.ObservationError):
+        blackbox.capture(
+            path, {"request_id": "failure", "producer": "test"}, repo=tmp_path
+        )
     assert integrity(path)["ok"]
     corrupt(path, "failures", "UPDATE failures SET code='CHANGED'")
     assert "record_integrity" in integrity(path)["errors"]
