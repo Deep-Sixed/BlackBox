@@ -1,0 +1,240 @@
+{
+  "scope": "Donor software inventory; no storage or runtime contents",
+  "original_donor_commit": "d62c5cd7fe4f5fc3f561f382a2908bcd2c7e6b65",
+  "inspected_donor_head": "d62c5cd7fe4f5fc3f561f382a2908bcd2c7e6b65",
+  "preserved_patch_sha256": "f9bf68e44481088ddbb2b994a430379e8ba37df25c46cabb0514f736af04a91a",
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "7c10cb5b1b3e45917216c35b35bb75ac5a9fbecbeef8ba94b819a2040ee28d47"
+    },
+    {
+      "path": "README.md",
+      "sha256": "461b59a23b31cd66b290f4c8c48dbb3884501df1bbc0225be01972460ce9f3ff"
+    },
+    {
+      "path": "deploy/evecor-ledger-gateway.service",
+      "sha256": "ac12d8a3044eeb40240931484fbd41248898f78eba052cbda5215744898d54df"
+    },
+    {
+      "path": "deploy/evecor-ledger-mcp.service",
+      "sha256": "64218eb20176d5680006af3080acfbb6ac730c5fbcb2b2ef9d3312a06e93cd13"
+    },
+    {
+      "path": "deploy/evecor-recall-compose.service",
+      "sha256": "3f48468736963e5988de20e3de73535c47e6060a890aa6394f9cb97db11324db"
+    },
+    {
+      "path": "deploy/evecor-recall-compose.timer",
+      "sha256": "5b55d93615e79a06eeeb7313716238d36d969fd04713a25c397d422b3ed2a118"
+    },
+    {
+      "path": "deploy/evecor-recon-gateway.service",
+      "sha256": "af3fa2f6c23b751cc4aa021cccb72f860b73bb64aa6c56b29e4e89102ef5f6ed"
+    },
+    {
+      "path": "deploy/legacy-standalone/evecor-ledger-gateway.service",
+      "sha256": "0dd458e271a870ad45d86420ede4d07547d7ac2e9c6c7f8d260787e9bc9e1121"
+    },
+    {
+      "path": "deploy/legacy-standalone/evecor-ledger-mcp.service",
+      "sha256": "50c582ede86549443d490a4b5f565bdf3629ff0d3f234c16ef9a5da0254297f5"
+    },
+    {
+      "path": "deploy/legacy-standalone/evecor-recall-compose.service",
+      "sha256": "96e1c2905d804584251e73c7bc188d7989f66951d7ae37ecc65e728d2aefc54c"
+    },
+    {
+      "path": "deploy/legacy-standalone/evecor-recall-compose.timer",
+      "sha256": "554d8cb27723dc03295d853846e8847328aae5d02af9319b7bc9a824319b1325"
+    },
+    {
+      "path": "deploy/legacy-standalone/evecor-recon-gateway.service",
+      "sha256": "e87e11ee097981f850c0ab19c0f7eebb8076732d92e089f428519733819d0a84"
+    },
+    {
+      "path": "deploy/legacy-standalone/retired-system-units/agentsync-ledger-check.service",
+      "sha256": "1b277dd9a6633605fbfa0a20ae947c1609d430671dc8bab24f21d5423f8e3da6"
+    },
+    {
+      "path": "deploy/legacy-standalone/retired-system-units/agentsync-ledger-check.timer",
+      "sha256": "eac1030c882e2c31d8080398ca8399d3396ca56c2e7a3dee073e7ba768733c22"
+    },
+    {
+      "path": "deploy/legacy-standalone/retired-system-units/evecor-ledger-gateway.service.system-copy",
+      "sha256": "0dca20d4901b41472ff5fdfa01cfba763440a4a8539322d6cc466425e1b80a68"
+    },
+    {
+      "path": "deploy/legacy-standalone/retired-system-units/evecor-recon-gateway.service.system-copy",
+      "sha256": "d5c34319f3227b80ef2a9f99aa1c79c14b54936876ad44f94aaa711ae2df0dc2"
+    },
+    {
+      "path": "deploy/recovery/2026-07-17/evecor-governance-postgres/compose.yml",
+      "sha256": "39d5ccfdab11333a059315245408a9bb16bf862856c589706d468a069dc5608f"
+    },
+    {
+      "path": "ledger/README.md",
+      "sha256": "a031ff755b71f113d5bfe3ed74d30309a29cc44575b92acae695e1dd89fdd1e3"
+    },
+    {
+      "path": "ledger/__init__.py",
+      "sha256": "8517931481dca2a09b9cd095132a8b9e556be7f0c1e69f52dcd8155d63a15da8"
+    },
+    {
+      "path": "ledger/__main__.py",
+      "sha256": "7ecab92b3d2e936cd8e097e364fe01459e99b59bf4422b8f1fe9f97a6869abdb"
+    },
+    {
+      "path": "ledger/cli.py",
+      "sha256": "778b83898892fc92a190061b0d85493b77e0ee29233b946bb355de05ff0da6b5"
+    },
+    {
+      "path": "ledger/gateway.py",
+      "sha256": "c8b0546bf966310d864a292651d968c6099de8b26bf8a94c700bfefceb5aae29"
+    },
+    {
+      "path": "ledger/mcp_server.py",
+      "sha256": "8170cf705f7fc50a942841f51b115d6f1021f2e596043e6e46473ff9bc9ee63e"
+    },
+    {
+      "path": "ledger/models.py",
+      "sha256": "9f64dbaa7c6e75d7378512a58f9c3089325f46ba8e7965cea5207980c6990df3"
+    },
+    {
+      "path": "ledger/parse.py",
+      "sha256": "dc2664e7209ba5bfe88ed90b8bca5af5aafe2c8ab3b9d148f9fdfb16adcc8018"
+    },
+    {
+      "path": "ledger/repository.py",
+      "sha256": "e53b8d0d4413e197de7cf948e81f6a61c45c4b68acbd60a1ebd97df342f10669"
+    },
+    {
+      "path": "ledger/search.py",
+      "sha256": "1fa94360cde50cd1ff1a7297bab19d5c8a6473f2d3d611fe3b4c89b9a00a28f8"
+    },
+    {
+      "path": "ledger/timeline.py",
+      "sha256": "b3c2986d3dec8f13704436fd80fc79e6ae3add4dd5a3bff74752b56e0724f92e"
+    },
+    {
+      "path": "ledger/validate.py",
+      "sha256": "04f527df12dd369eb0280b0965017f637d3520873de21123762d25d49b291c42"
+    },
+    {
+      "path": "ledger/yaml_subset.py",
+      "sha256": "cc6f275bae188dddd4083c9194e653add6a9840289ae3f038828d70b21762ad6"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "3deabae1f9beeebcb29ccb565b6ed918c6a7b3efd14abdc5c642ce93c0e29970"
+    },
+    {
+      "path": "recall/README.md",
+      "sha256": "04f03e89fa100c1585251227d96291a30e292033ddf7cfafafb704f02d0a035f"
+    },
+    {
+      "path": "recall/__init__.py",
+      "sha256": "abd305c96e0eb940f3c75f2a8ec46dfb8c5e9834d299649534b1dec5154d7a58"
+    },
+    {
+      "path": "recall/__main__.py",
+      "sha256": "8f8d13dfc9d136f37e4e8a7980fa9c259d792574ce681e3886b68e0fdc34c1f4"
+    },
+    {
+      "path": "recall/cli.py",
+      "sha256": "0f278af39a9d2a97255e616fd5cc2789286bc90eb7477cd767a4c43f27be6c5f"
+    },
+    {
+      "path": "recall/compose.py",
+      "sha256": "808d637a51e6572b9c5a2790a21a154bd8c9ff0ff86a776d3207b433a6b7b54c"
+    },
+    {
+      "path": "recall/mcp_server.py",
+      "sha256": "1f4c8f6e04b76855254a6fe8c5a2e068f4b1c835463d759cdfa1cf1602e8ea6b"
+    },
+    {
+      "path": "recall/sources.py",
+      "sha256": "9f3fd329f9b4ca89dae466525a472c4cc986347498bb595db411a1c4f8058eee"
+    },
+    {
+      "path": "recon/README.md",
+      "sha256": "1d4817ce4b2faf2661359c8cef02d28bca648643975a167c3a2e8acb8b72089b"
+    },
+    {
+      "path": "recon/__init__.py",
+      "sha256": "41e9ea16622fb05627d030fba890205a559cd4a9a03c6dcb9a98a378a580372c"
+    },
+    {
+      "path": "recon/config.py",
+      "sha256": "8ac2235fc99164ae56034e52fb0475040a0ffdcacfd85ec1314bedcf07fa967b"
+    },
+    {
+      "path": "recon/finalize.py",
+      "sha256": "85d159acb76dcfa858a2153bfdee461599306c51bd9017a2db885975e3d06ef0"
+    },
+    {
+      "path": "recon/gateway.py",
+      "sha256": "45a1f414db2aa2f2c4aeb70e5291c00439100144b321ab56994d4d973fcd360e"
+    },
+    {
+      "path": "recon/session_record.py",
+      "sha256": "59bee033b7ad183605c818c1728e04d22e4d25ef5daa59a49b0e619e75f204ff"
+    },
+    {
+      "path": "tests/fixtures/ledger_pluto/20-raw/pluto-iau-2006.md",
+      "sha256": "2f071fa6ea9b774c5e3ac0833da7240cdbe055cfdbae5f821019b805551fca44"
+    },
+    {
+      "path": "tests/fixtures/ledger_pluto/20-raw/pluto-tombaugh-1930.md",
+      "sha256": "744737a42ed624346cfc99eaa28ea7c33c842675c46eeea3ad8f218ebef1ae63"
+    },
+    {
+      "path": "tests/fixtures/ledger_pluto/30-ledger/claims/pluto.md",
+      "sha256": "b89040e96a65414757ea777351f74747ef9dbf9c32e95cbde231f04328a8471d"
+    },
+    {
+      "path": "tests/fixtures/snitch/cursor_stop_completed.json",
+      "sha256": "7c9405274a9dd32086466236a41c1731734f014503bfb4ff7e1099d6414011bb"
+    },
+    {
+      "path": "tests/fixtures/wiki_minimal/entities/Anthropic.md",
+      "sha256": "788c7ceaff9cc783036caa4931a14364f99be4fb8f538d74c0a2d7bcf26b63c7"
+    },
+    {
+      "path": "tests/fixtures/wiki_minimal/entities/ClaudeSonnet4.md",
+      "sha256": "0c406ed894f5edd435a5af3c3a80343b429e0cc9c797ce32f1188fff51a127b8"
+    },
+    {
+      "path": "tests/fixtures/wiki_minimal/index.md",
+      "sha256": "c0288c95f7d3b0ee739d98938a3890d2fb7f78bfdd82147dd18909b7b657b51e"
+    },
+    {
+      "path": "tests/fixtures/wiki_minimal/overview.md",
+      "sha256": "baa1e28ae17f77f9a17024fea3100c560efd132c6ab67f621a050b2cd1ef17fd"
+    },
+    {
+      "path": "tests/test_date_archive.py",
+      "sha256": "4ffc6fc42b19e603ae8f8d310cec9a6acc087823d8d5e13e6e2749120be9b369"
+    },
+    {
+      "path": "tests/test_finalize.py",
+      "sha256": "ad4a6a7980682153f545523d766810ae309b7a1d0b687cda117c6e5ce0608bc4"
+    },
+    {
+      "path": "tests/test_ledger.py",
+      "sha256": "f2a9175e901a6396da68360df498c84680cf10c46866516033ae772ddeb45189"
+    },
+    {
+      "path": "tests/test_recall.py",
+      "sha256": "ba7f7ee2ccfc192c1732ac417725a64a985ddceb734876e55c8c623707bd3de5"
+    },
+    {
+      "path": "tests/test_recon_gateway.py",
+      "sha256": "70ffc6dea1a576bc0dc7dd994e2880b8fd65f1a11300561df409d94d21fb686a"
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "d1f08c59d427f59bba62ca0f0c5fcb100dfebfdbca02ad4527ab233e125880b9"
+    }
+  ]
+}
