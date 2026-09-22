@@ -84,3 +84,12 @@ The checker detects inconsistencies against locally stored metadata; it cannot
 prove complete history against a hostile owner. Receipt checking/backfill currently
 requires memory proportional to the stored records and migration holds a writer
 lock for the backfill. No external observer authentication is introduced.
+
+## Python consumer boundary
+
+Package 0.3.0 keeps schema v2 unchanged. Public reader operations raise
+`MigrationRequiredError` for v1; `initialize` and capture/claim writer operations
+may migrate. `check_integrity` returns typed findings when inspection succeeds
+and raises bounded errors when the database cannot be opened or validated.
+The CLI continues to serialize these outcomes into its check-result envelope.
+See the [public API contract](public-api.md).
