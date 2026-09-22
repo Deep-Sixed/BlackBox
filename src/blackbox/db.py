@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ._signals import DatabaseIssue, MigrationRequired, SchemaIssue
 from .migrations import DEFINITIONS, install, schema_digest, validate
 from .schema import APPLICATION_ID, VERSION
 
@@ -21,7 +22,7 @@ def now() -> str:
 def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
     path = Path(path).expanduser().absolute()
     if path.is_symlink():
-        raise ValueError("database symlinks are not supported")
+        raise DatabaseIssue("database symlinks are not supported")
     if not readonly:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
@@ -31,7 +32,7 @@ def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
         else:
             os.close(fd)
         if path.stat().st_mode & 0o077:
-            raise ValueError("database must have private permissions (0600)")
+            raise DatabaseIssue("database must have private permissions (0600)")
     connection = sqlite3.connect(
         path.as_uri() + ("?mode=ro" if readonly else "?mode=rw"),
         uri=True,
@@ -48,17 +49,20 @@ def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
         else:
             application = connection.execute("PRAGMA application_id").fetchone()[0]
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if application not in (0, APPLICATION_ID) or version not in (0, *DEFINITIONS):
-                raise ValueError("unsupported database identity or schema version")
+            if application not in (0, APPLICATION_ID) or version not in (
+                0,
+                *DEFINITIONS,
+            ):
+                raise SchemaIssue("unsupported database identity or schema version")
             if (
                 application == 0
                 and connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1"
                 ).fetchone()
             ):
-                raise ValueError("refusing to adopt a non-BlackBox database")
+                raise SchemaIssue("refusing to adopt a non-BlackBox database")
             if connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
-                raise ValueError("WAL mode unavailable")
+                raise DatabaseIssue("WAL mode unavailable")
             connection.execute("PRAGMA synchronous=FULL")
             with transaction(connection):
                 install(connection, now())
@@ -70,13 +74,15 @@ def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
 
 
 def verify_schema(connection: sqlite3.Connection) -> None:
-    if connection.execute("PRAGMA user_version").fetchone()[0] == 1:
-        raise ValueError("schema migration required; use a writer initialization")
-    if (
-        connection.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID
-        or connection.execute("PRAGMA user_version").fetchone()[0] != VERSION
-    ):
-        raise ValueError("unsupported database identity or schema version")
+    if connection.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID:
+        raise SchemaIssue("unsupported database identity or schema version")
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    if version == 1:
+        raise MigrationRequired(
+            "schema migration required; use a writer initialization"
+        )
+    if version != VERSION:
+        raise SchemaIssue("unsupported database identity or schema version")
     validate(connection, VERSION)
 
 

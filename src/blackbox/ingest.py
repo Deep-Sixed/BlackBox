@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
+import subprocess
 from pathlib import Path
 
+from ._signals import ClaimConflict, MissingRecord, ObservationIssue, RequestConflict
 from .db import connect, now, transaction
 from .integrity import append_receipt
 from .models import Capture, Claim, canonical, identity
@@ -89,10 +92,18 @@ def claim_row(
             raise ValueError("correction target must belong to the session")
     source_id = source(connection, session, claim.source, "caller_asserted")
     key = identity("clm", [session, claim.model_dump(), target, relation])
-    cursor = connection.execute(
-        "INSERT INTO claims VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
-        (key, session, source_id, claim.topic, claim.statement, target, relation),
-    )
+    try:
+        cursor = connection.execute(
+            "INSERT INTO claims VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+            (key, session, source_id, claim.topic, claim.statement, target, relation),
+        )
+    except sqlite3.IntegrityError as error:
+        if (
+            relation == "supersedes"
+            and error.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+        ):
+            raise ClaimConflict("claim already superseded") from None
+        raise
     if cursor.rowcount:
         append_receipt(connection, "claims", key)
         event(connection, session, "CLAIM", key)
@@ -123,7 +134,7 @@ def ingest(
                 "SELECT fingerprint FROM sessions WHERE id=?", (session,)
             ).fetchone()
             if existing is not None and existing[0] != fingerprint:
-                raise ValueError("request ID already binds different input")
+                raise RequestConflict("request ID already binds different input")
             if existing is None:
                 connection.execute(
                     "INSERT INTO sessions VALUES (?,?,?,?,?)",
@@ -141,7 +152,12 @@ def ingest(
                     }
                 # The write lock serializes capture/retry for this local database.
                 if repo is not None:
-                    data = collect_git(repo, baseline)
+                    try:
+                        data = collect_git(repo, baseline)
+                    except ValueError, OSError, subprocess.SubprocessError:
+                        raise ObservationIssue(
+                            "Git metadata collection failed"
+                        ) from None
                     source_id = source(connection, session, "blackbox.git", "local_git")
                     observation(connection, session, source_id, "git", data, local=True)
                 for item in capture.observations:
@@ -217,8 +233,11 @@ def append_claim(
     connection = connect(database)
     try:
         with transaction(connection):
-            if state(connection, session) != "COMMITTED":
-                raise ValueError("claim requires a committed session")
+            current = state(connection, session)
+            if current is None:
+                raise MissingRecord("unknown session")
+            if current != "COMMITTED":
+                raise RequestConflict("claim requires a committed session")
             return claim_row(connection, session, claim, target, relation)
     finally:
         connection.close()

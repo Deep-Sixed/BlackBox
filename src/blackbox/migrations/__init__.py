@@ -4,6 +4,7 @@ import hashlib
 import sqlite3
 from contextlib import closing
 
+from .._signals import EvidenceIssue, SchemaIssue
 from ..models import canonical
 from . import v001, v002
 
@@ -28,12 +29,12 @@ def schema_objects(connection):
 
 def validate(connection, version):
     if version not in DEFINITIONS:
-        raise ValueError("unsupported database identity or schema version")
+        raise SchemaIssue("unsupported database identity or schema version")
     with closing(sqlite3.connect(":memory:")) as expected:
         for statement in DEFINITIONS[version]:
             expected.execute(statement)
         if schema_objects(connection) != schema_objects(expected):
-            raise ValueError("invalid source schema")
+            raise SchemaIssue("invalid source schema")
     metadata = list(
         connection.execute("SELECT * FROM schema_metadata ORDER BY version")
     )
@@ -44,10 +45,10 @@ def validate(connection, version):
         or versions != list(range(versions[0], version + 1))
         or any(item not in DEFINITIONS for item in versions)
     ):
-        raise ValueError("schema migration digest mismatch")
+        raise SchemaIssue("schema migration digest mismatch")
     for row in metadata:
         if row["schema_digest"] != schema_digest(row["version"]):
-            raise ValueError("schema migration digest mismatch")
+            raise SchemaIssue("schema migration digest mismatch")
     if version >= 2:
         history = [
             tuple(row)
@@ -67,17 +68,17 @@ def validate(connection, version):
             if row["version"] >= 2
         ]
         if history != expected_history:
-            raise ValueError("invalid migration history")
+            raise SchemaIssue("invalid migration history")
 
 
 def install(connection, timestamp):
     if not connection.in_transaction:
-        raise ValueError("migration requires a transaction")
+        raise SchemaIssue("migration requires a transaction")
     version = connection.execute("PRAGMA user_version").fetchone()[0]
     application = connection.execute("PRAGMA application_id").fetchone()[0]
     if version == 0:
         if application != 0 or schema_objects(connection):
-            raise ValueError("refusing to adopt a non-BlackBox database")
+            raise SchemaIssue("refusing to adopt a non-BlackBox database")
         for statement in DEFINITIONS[CURRENT]:
             connection.execute(statement)
         connection.execute(
@@ -92,13 +93,13 @@ def install(connection, timestamp):
         connection.execute(f"PRAGMA user_version={CURRENT}")
     else:
         if application != v001.APPLICATION_ID:
-            raise ValueError("unsupported database identity or schema version")
+            raise SchemaIssue("unsupported database identity or schema version")
         validate(connection, version)
         if version < CURRENT:
             from ..integrity import evidence_errors
 
             if evidence_errors(connection):
-                raise ValueError("invalid source evidence")
+                raise EvidenceIssue("invalid source evidence")
         while version < CURRENT:
             UPGRADES[version](connection)
             next_version = version + 1
