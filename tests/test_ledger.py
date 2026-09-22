@@ -446,6 +446,328 @@ def test_mcp_search_topic_and_as_of_filters(tmp_path: Path, monkeypatch: pytest.
     assert "clm-2026-1001" not in [r["claim_id"] for r in recent["results"]]
 
 
+def test_validator_catches_contest_linked_inconsistency(tmp_path: Path) -> None:
+    """LF-02: Validator must catch contest claim existing while target remains active/high."""
+    from ledger.models import ClaimRecord, SourceRef
+    from ledger.validate import validate_claims
+
+    # Create a contest claim with disputes relation
+    contest = ClaimRecord(
+        id="clm-2026-1001",
+        statement="Disputed by newer evidence",
+        topic="test",
+        type="claim",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="high",
+        status="active",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+        contradicts=["clm-2026-1000"],
+        relations=["disputes:clm-2026-1000"],
+    )
+    # Target claim is still active/high (inconsistent!)
+    target = ClaimRecord(
+        id="clm-2026-1000",
+        statement="Original fact",
+        topic="test",
+        type="fact",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="high",
+        status="active",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+    )
+
+    claims = [contest, target]
+    report = validate_claims(tmp_path, claims)
+
+    assert not report.ok
+    # Should detect both contradicts and disputes relation inconsistencies
+    assert any("contradicts clm-2026-1000 but target status is 'active'" in e for e in report.errors)
+    assert any("relations includes 'disputes:clm-2026-1000' but target status is 'active'" in e for e in report.errors)
+    assert any("target confidence is 'high', must be 'contested'" in e for e in report.errors)
+
+
+def test_validator_accepts_consistent_contest_linked(tmp_path: Path) -> None:
+    """Validator accepts contest_linked when target is properly marked contested."""
+    from ledger.models import ClaimRecord, SourceRef
+    from ledger.validate import validate_claims
+
+    contest = ClaimRecord(
+        id="clm-2026-1001",
+        statement="Disputed by newer evidence",
+        topic="test",
+        type="claim",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="high",
+        status="active",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+        contradicts=["clm-2026-1000"],
+        relations=["disputes:clm-2026-1000"],
+    )
+    target = ClaimRecord(
+        id="clm-2026-1000",
+        statement="Original fact",
+        topic="test",
+        type="fact",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="contested",
+        status="contested",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+        note="contested_by=clm-2026-1001",
+    )
+
+    claims = [contest, target]
+    report = validate_claims(tmp_path, claims)
+    assert report.ok, report.errors
+
+
+def test_validator_catches_supersede_inconsistency(tmp_path: Path) -> None:
+    """LF-01: Validator must catch supersede claim with dangling superseded_by."""
+    from ledger.models import ClaimRecord, SourceRef
+    from ledger.validate import validate_claims
+
+    # New claim says it supersedes old, but old is still active
+    new_claim = ClaimRecord(
+        id="clm-2026-1001",
+        statement="Corrected fact",
+        topic="test",
+        type="fact",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="high",
+        status="active",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+        supersedes="clm-2026-1000",
+    )
+    # Old claim is still active (inconsistent!)
+    old_claim = ClaimRecord(
+        id="clm-2026-1000",
+        statement="Original fact",
+        topic="test",
+        type="fact",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="high",
+        status="active",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+    )
+
+    claims = [new_claim, old_claim]
+    report = validate_claims(tmp_path, claims)
+
+    assert not report.ok
+    assert any("supersedes clm-2026-1000 but target status is 'active'" in e for e in report.errors)
+    assert any("target superseded_by is 'None', must be 'clm-2026-1001'" in e for e in report.errors)
+
+
+def test_validator_catches_dangling_superseded_by(tmp_path: Path) -> None:
+    """LF-01: Validator must catch old claim with superseded_by but no valid supersedes."""
+    from ledger.models import ClaimRecord, SourceRef
+    from ledger.validate import validate_claims
+
+    # Old claim says it was superseded, but new claim doesn't exist or doesn't point back
+    old_claim = ClaimRecord(
+        id="clm-2026-1000",
+        statement="Original fact",
+        topic="test",
+        type="fact",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="high",
+        status="superseded",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+        superseded_by="clm-2026-1001",
+    )
+    # New claim exists but doesn't point back (inconsistent!)
+    new_claim = ClaimRecord(
+        id="clm-2026-1001",
+        statement="Corrected fact",
+        topic="test",
+        type="fact",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="high",
+        status="active",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+        # Missing supersedes!
+    )
+
+    claims = [old_claim, new_claim]
+    report = validate_claims(tmp_path, claims)
+
+    assert not report.ok
+    assert any("superseded_by clm-2026-1001 but target supersedes is 'None'" in e for e in report.errors)
+
+
+def test_validator_accepts_consistent_supersede(tmp_path: Path) -> None:
+    """Validator accepts supersede when reciprocal links and statuses are correct."""
+    from ledger.models import ClaimRecord, SourceRef
+    from ledger.validate import validate_claims
+
+    new_claim = ClaimRecord(
+        id="clm-2026-1001",
+        statement="Corrected fact",
+        topic="test",
+        type="fact",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="high",
+        status="active",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+        supersedes="clm-2026-1000",
+    )
+    old_claim = ClaimRecord(
+        id="clm-2026-1000",
+        statement="Original fact",
+        topic="test",
+        type="fact",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="high",
+        status="superseded",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+        superseded_by="clm-2026-1001",
+    )
+
+    claims = [new_claim, old_claim]
+    report = validate_claims(tmp_path, claims)
+    assert report.ok, report.errors
+
+
+def test_add_claim_rejects_duplicate_id(tmp_path: Path) -> None:
+    """LF-04: add_claim must reject duplicate ID across entire store."""
+    from ledger.repository import add_claim, _claim_id_exists
+    from ledger.models import SourceRef
+    from ledger.parse import claim_from_mapping
+
+    claim1 = claim_from_mapping({
+        "id": "clm-2026-dup001",
+        "statement": "First claim",
+        "topic": "test",
+        "type": "fact",
+        "sources": [{"ref": "test.md", "quote": "evidence"}],
+        "confidence": "high",
+        "status": "active",
+        "created": "2026-07-02T16:00:00+00:00",
+        "updated": "2026-07-02T16:00:00+00:00",
+    })
+    add_claim(tmp_path, claim1)
+
+    # Try to add another claim with same ID - should fail
+    claim2 = claim_from_mapping({
+        "id": "clm-2026-dup001",
+        "statement": "Second claim",
+        "topic": "test",
+        "type": "fact",
+        "sources": [{"ref": "test.md", "quote": "evidence"}],
+        "confidence": "high",
+        "status": "active",
+        "created": "2026-07-02T16:00:00+00:00",
+        "updated": "2026-07-02T16:00:00+00:00",
+    })
+    with pytest.raises(ValueError, match="claim id 'clm-2026-dup001' already exists"):
+        add_claim(tmp_path, claim2)
+
+    # _claim_id_exists should detect it
+    assert _claim_id_exists(tmp_path, "clm-2026-dup001")
+
+
+def test_supersede_rejects_duplicate_new_id(tmp_path: Path) -> None:
+    """LF-04: supersede must reject if new claim ID already exists."""
+    from ledger.repository import add_claim, supersede
+    from ledger.models import ClaimRecord, SourceRef
+    from ledger.parse import claim_from_mapping
+
+    old = claim_from_mapping({
+        "id": "clm-2026-sup001",
+        "statement": "Original",
+        "topic": "test",
+        "type": "fact",
+        "sources": [{"ref": "test.md", "quote": "evidence"}],
+        "confidence": "high",
+        "status": "active",
+        "created": "2026-07-02T16:00:00+00:00",
+        "updated": "2026-07-02T16:00:00+00:00",
+    })
+    add_claim(tmp_path, old)
+
+    # Create a claim that will get a generated ID, then try to supersede with same ID
+    existing = claim_from_mapping({
+        "id": "clm-2026-sup002",
+        "statement": "Existing",
+        "topic": "test",
+        "type": "fact",
+        "sources": [{"ref": "test.md", "quote": "evidence"}],
+        "confidence": "high",
+        "status": "active",
+        "created": "2026-07-02T16:00:00+00:00",
+        "updated": "2026-07-02T16:00:00+00:00",
+    })
+    add_claim(tmp_path, existing)
+
+    # Try to supersede old with a new claim that would get the same ID as existing
+    new_claim = ClaimRecord(
+        id="clm-2026-sup002",  # Same as existing!
+        statement="Correction",
+        topic="test",
+        type="fact",
+        sources=[SourceRef(ref="test.md", quote="evidence")],
+        confidence="high",
+        status="active",
+        created="2026-07-02T16:00:00+00:00",
+        updated="2026-07-02T16:00:00+00:00",
+    )
+    with pytest.raises(ValueError, match="claim id 'clm-2026-sup002' already exists"):
+        supersede(tmp_path, "clm-2026-sup001", new_claim)
+
+
+def test_contest_linked_rejects_duplicate_id(tmp_path: Path) -> None:
+    """LF-04: contest_linked must reject if contest claim ID already exists."""
+    from ledger.repository import add_claim, contest_linked
+    from ledger.models import SourceRef
+    from ledger.parse import claim_from_mapping
+
+    target = claim_from_mapping({
+        "id": "clm-2026-con001",
+        "statement": "Target",
+        "topic": "test",
+        "type": "fact",
+        "sources": [{"ref": "test.md", "quote": "evidence"}],
+        "confidence": "high",
+        "status": "active",
+        "created": "2026-07-02T16:00:00+00:00",
+        "updated": "2026-07-02T16:00:00+00:00",
+    })
+    add_claim(tmp_path, target)
+
+    # Create an existing claim that will conflict
+    existing = claim_from_mapping({
+        "id": "clm-2026-con002",
+        "statement": "Existing contest",
+        "topic": "test",
+        "type": "claim",
+        "sources": [{"ref": "test.md", "quote": "evidence"}],
+        "confidence": "high",
+        "status": "active",
+        "created": "2026-07-02T16:00:00+00:00",
+        "updated": "2026-07-02T16:00:00+00:00",
+    })
+    add_claim(tmp_path, existing)
+
+    # Try to contest with a contest claim that has the same ID
+    with pytest.raises(ValueError, match="claim id 'clm-2026-con002' already exists"):
+        contest_linked(
+            tmp_path,
+            "clm-2026-con001",
+            rationale="Disputed",
+            sources=[SourceRef(ref="test.md", quote="evidence")],
+            contest_id="clm-2026-con002",  # Force same ID
+        )
+
+
 def test_mcp_build_claim_validation() -> None:
     from ledger.mcp_server import SourceInput, _build_claim
 

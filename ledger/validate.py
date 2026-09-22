@@ -247,5 +247,59 @@ def validate_claims(repo: Path, claims: list[ClaimRecord]) -> ValidationReport:
         for other_id in claim.contradicts:
             if other_id not in by_id:
                 report.errors.append(f"{prefix}contradicts unknown id {other_id}")
+            else:
+                other = by_id[other_id]
+                # If we contradict a claim, that claim MUST be marked contested
+                if other.status != "contested":
+                    report.errors.append(
+                        f"{prefix}contradicts {other_id} but target status is '{other.status}', must be 'contested'"
+                    )
+                if other.confidence != "contested":
+                    report.errors.append(
+                        f"{prefix}contradicts {other_id} but target confidence is '{other.confidence}', must be 'contested'"
+                    )
+
+        # Check for contest_linked inconsistency: if we have relations "disputes:X",
+        # target X must be contested
+        for relation in claim.relations:
+            if relation.startswith("disputes:"):
+                target_id = relation.split(":", 1)[1]
+                if target_id in by_id:
+                    target = by_id[target_id]
+                    if target.status != "contested":
+                        report.errors.append(
+                            f"{prefix}relations includes 'disputes:{target_id}' but target status is '{target.status}', must be 'contested'"
+                        )
+                    if target.confidence != "contested":
+                        report.errors.append(
+                            f"{prefix}relations includes 'disputes:{target_id}' but target confidence is '{target.confidence}', must be 'contested'"
+                        )
+
+    # Check for supersede inconsistency: if we have supersedes/superseded_by,
+# reciprocal links and statuses must be correct
+        if claim.supersedes:
+            target_id = claim.supersedes
+            if target_id in by_id:
+                target = by_id[target_id]
+                if target.status != "superseded":
+                    report.errors.append(
+                        f"{prefix}supersedes {target_id} but target status is '{target.status}', must be 'superseded'"
+                    )
+                if target.superseded_by != claim.id:
+                    report.errors.append(
+                        f"{prefix}supersedes {target_id} but target superseded_by is '{target.superseded_by}', must be '{claim.id}'"
+                    )
+        if claim.superseded_by:
+            target_id = claim.superseded_by
+            if target_id in by_id:
+                target = by_id[target_id]
+                if target.status != "active":
+                    report.errors.append(
+                        f"{prefix}superseded_by {target_id} but target status is '{target.status}', must be 'active'"
+                    )
+                if target.supersedes != claim.id:
+                    report.errors.append(
+                        f"{prefix}superseded_by {target_id} but target supersedes is '{target.supersedes}', must be '{claim.id}'"
+                    )
 
     return report

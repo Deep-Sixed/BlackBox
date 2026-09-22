@@ -106,7 +106,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    repo = resolve_repo(args.repo)
+    # If no repo specified, check FLIGHT_RECORDER_STORE env var
+    repo_arg = args.repo
+    if repo_arg is None:
+        import os
+        store = os.environ.get("FLIGHT_RECORDER_STORE")
+        if store:
+            repo_arg = Path(store)
+    repo = resolve_repo(repo_arg)
 
     if args.command == "check":
         return cmd_check(repo)

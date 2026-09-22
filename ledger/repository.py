@@ -13,6 +13,9 @@ from uuid import uuid4
 from ledger.models import ClaimRecord, SourceRef
 from ledger.parse import parse_claim_file
 
+TRANSACTION_DIR = ".transactions"
+TRANSACTION_INTENT_SUFFIX = ".intent.json"
+
 CLAIM_SCHEMA_VERSION = "ledger.claim.v1"
 CLAIM_FILENAME_PATTERN = re.compile(r"[^a-zA-Z0-9_.-]+")
 
@@ -86,33 +89,81 @@ def load_claims(repo: Path) -> list[ClaimRecord]:
     return claims
 
 
+def _claim_id_exists(repo: Path, claim_id: str) -> bool:
+    """Check if a claim ID already exists anywhere in the canonical store."""
+    for claim in load_claims(repo):
+        if claim.id == claim_id:
+            return True
+    return False
+
+
 def add_claim(repo: Path, claim: ClaimRecord) -> ClaimRecord:
+    # Check for duplicate ID across entire store (all date folders)
+    if claim.id and _claim_id_exists(repo, claim.id):
+        raise ValueError(f"claim id '{claim.id}' already exists in store")
     _write_claim(repo, _prepare_claim(claim, operation="add_claim"))
     return claim
 
 
 def supersede(repo: Path, old_claim_id: str, new_claim: ClaimRecord) -> ClaimRecord:
-    now = _now()
-    old_claim = _find_claim(repo, old_claim_id)
-    if old_claim is None:
-        raise ValueError(f"cannot supersede unknown claim id: {old_claim_id}")
+    """Supersede a claim with a new one using transaction safety.
 
-    if not new_claim.supersedes:
-        new_claim.supersedes = old_claim_id
-    if new_claim.supersedes != old_claim_id:
-        raise ValueError("new claim supersedes a different claim id")
-    if not new_claim.created:
-        new_claim.created = now
-    new_claim.updated = now
-    _prepare_claim(new_claim, operation="add_claim")  # assigns the id before it is linked
+    Uses a lock and transaction intent file for crash recovery.
+    """
+    # Acquire lock for the old claim
+    lock_path = repo / f".lock-{old_claim_id}"
+    lock_fd = _acquire_lock(lock_path)
 
-    old_claim.status = "superseded"
-    old_claim.updated = now
-    old_claim.superseded_by = new_claim.id
+    try:
+        now = _now()
+        old_claim = _find_claim(repo, old_claim_id)
+        if old_claim is None:
+            raise ValueError(f"cannot supersede unknown claim id: {old_claim_id}")
 
-    _write_claim(repo, _prepare_claim(old_claim, operation="supersede"))
-    _write_claim(repo, new_claim)
-    return new_claim
+        # Re-check state after acquiring lock
+        if old_claim.status == "superseded":
+            raise ValueError(f"claim {old_claim_id} is already superseded")
+
+        if not new_claim.supersedes:
+            new_claim.supersedes = old_claim_id
+        if new_claim.supersedes != old_claim_id:
+            raise ValueError("new claim supersedes a different claim id")
+        if not new_claim.created:
+            new_claim.created = now
+        new_claim.updated = now
+
+        # Prepare new claim to get its ID, then check for duplicate
+        new_prepped = _prepare_claim(new_claim, operation="add_claim")
+        if _claim_id_exists(repo, new_prepped.id):
+            raise ValueError(f"claim id '{new_prepped.id}' already exists in store")
+        old_prepped = _prepare_claim(old_claim, operation="supersede")
+
+        # Write transaction intent FIRST
+        old_claim_data = _claim_to_intent_dict(old_prepped)
+        new_claim_data = _claim_to_intent_dict(new_prepped)
+        _write_transaction_intent(repo, "supersede", old_claim_id, new_prepped.id, old_claim_data, new_claim_data)
+
+        # Update old claim
+        old_prepped.status = "superseded"
+        old_prepped.updated = now
+        old_prepped.superseded_by = new_prepped.id
+
+        # Write new claim FIRST (so it exists if we crash)
+        _write_claim(repo, new_prepped)
+
+        # Update transaction state
+        _update_transaction_state(repo, "supersede", old_claim_id, new_prepped.id, "new_written")
+
+        # Update old claim
+        _write_claim(repo, old_prepped)
+
+        # Mark transaction committed and clean up
+        _update_transaction_state(repo, "supersede", old_claim_id, new_prepped.id, "committed")
+        _cleanup_transaction_intent(repo, "supersede", old_claim_id, new_prepped.id)
+
+        return new_prepped
+    finally:
+        _release_lock(lock_fd)
 
 
 def contest(repo: Path, claim_id: str, *, reason: str, contested_by: str | None = None) -> ClaimRecord:
@@ -140,44 +191,95 @@ def contest_linked(
     confidence: str = "high",
     contest_id: str | None = None,
 ) -> tuple[ClaimRecord, ClaimRecord]:
-    """Contest a claim by writing a new atomic contest claim.
+    """Contest a claim by writing a new atomic contest claim with transaction safety.
 
     Contest evidence lives in the new claim (relations ``disputes:<target_id>``,
     ``contradicts=[target_id]``), never in the target's body. The target only
     changes state: status/confidence become contested plus a pointer note.
+
+    Uses a transaction intent file for crash recovery.
     """
     if not rationale.strip():
         raise ValueError("contest requires a non-empty rationale")
     if not sources:
         raise ValueError("contest requires at least one evidence source")
 
-    now = _now()
-    target = _find_claim(repo, target_id)
-    if target is None:
-        raise ValueError(f"cannot contest unknown claim id: {target_id}")
+    # Acquire a simple file-based lock for the target claim
+    lock_path = repo / f".lock-{target_id}"
+    lock_fd = _acquire_lock(lock_path)
 
-    contest_claim = ClaimRecord(
-        id=contest_id or "",
-        statement=rationale,
-        topic=topic or target.topic,
-        type="claim",
-        sources=list(sources),
-        confidence=confidence,
-        status="active",
-        created=now,
-        updated=now,
-        contradicts=[target_id],
-        relations=[f"disputes:{target_id}"],
-    )
-    _write_claim(repo, _prepare_claim(contest_claim, operation="contest"))
+    try:
+        now = _now()
+        target = _find_claim(repo, target_id)
+        if target is None:
+            raise ValueError(f"cannot contest unknown claim id: {target_id}")
 
-    pointer = f"contested_by={contest_claim.id}"
-    target.status = "contested"
-    target.confidence = "contested"
-    target.updated = now
-    target.note = pointer if not target.note else f"{target.note}; {pointer}"
-    _write_claim(repo, _prepare_claim(target, operation="contest"))
-    return contest_claim, target
+        # Re-check target state after acquiring lock
+        if target.status == "contested":
+            # Already contested, return existing state
+            existing_contest_id = None
+            if target.note:
+                for part in target.note.split(";"):
+                    part = part.strip()
+                    if part.startswith("contested_by="):
+                        existing_contest_id = part.split("=", 1)[1]
+                        break
+            if existing_contest_id:
+                existing = _find_claim(repo, existing_contest_id)
+                if existing:
+                    return existing, target
+
+        contest_claim = ClaimRecord(
+            id=contest_id or "",
+            statement=rationale,
+            topic=topic or target.topic,
+            type="claim",
+            sources=list(sources),
+            confidence=confidence,
+            status="active",
+            created=now,
+            updated=now,
+            contradicts=[target_id],
+            relations=[f"disputes:{target_id}"],
+        )
+
+        # Prepare new claim to get its ID, then check for duplicate
+        new_prepped = _prepare_claim(contest_claim, operation="contest")
+        if _claim_id_exists(repo, new_prepped.id):
+            raise ValueError(f"claim id '{new_prepped.id}' already exists in store")
+
+        # Prepare both claims
+        target_prepped = _prepare_claim(target, operation="contest")
+        target_prepped = _prepare_claim(target, operation="contest")
+
+        # Write transaction intent FIRST
+        old_claim_data = _claim_to_intent_dict(target_prepped)
+        new_claim_data = _claim_to_intent_dict(new_prepped)
+        _write_transaction_intent(repo, "contest_linked", target_id, new_prepped.id, old_claim_data, new_claim_data)
+
+        # Write contest claim
+        _write_claim(repo, new_prepped)
+
+        # Update transaction state
+        _update_transaction_state(repo, "contest_linked", target_id, new_prepped.id, "contest_written")
+
+        # Update target
+        pointer = f"contested_by={new_prepped.id}"
+        target_prepped.status = "contested"
+        target_prepped.confidence = "contested"
+        target_prepped.updated = now
+        target_prepped.note = pointer if not target_prepped.note else f"{target_prepped.note}; {pointer}"
+
+        # Write target
+        _write_claim(repo, target_prepped)
+
+        # Mark transaction committed and clean up
+        _update_transaction_state(repo, "contest_linked", target_id, new_prepped.id, "committed")
+        _cleanup_transaction_intent(repo, "contest_linked", target_id, new_prepped.id)
+
+        return new_prepped, target_prepped
+    finally:
+        _release_lock(lock_fd)
 
 
 def append_receipt(repo: Path, receipt: dict[str, Any]) -> None:
@@ -329,3 +431,295 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_ready(item) for item in value]
     return value
+
+
+def _acquire_lock(lock_path: Path, timeout: float = 30.0) -> int:
+    """Acquire an OS advisory lock (fcntl.flock) on a lock file.
+
+    Returns the file descriptor, which must be kept open until release.
+    The lock is automatically released when the FD is closed or the process dies.
+    """
+    import fcntl
+    import time
+
+    # Open the lock file (create if needed)
+    fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o644)
+
+    start = time.time()
+    while True:
+        try:
+            # Try to acquire exclusive lock (non-blocking)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except BlockingIOError:
+            if time.time() - start > timeout:
+                os.close(fd)
+                raise TimeoutError(f"Could not acquire lock on {lock_path}")
+            time.sleep(0.05)
+
+
+def _release_lock(fd: int) -> None:
+    """Release an OS advisory lock by closing the file descriptor.
+
+    The kernel automatically releases the lock when the FD is closed.
+    """
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _cleanup_transaction_intent(repo: Path, operation: str, old_id: str, new_id: str) -> None:
+    """Remove a transaction intent file after successful completion."""
+    path = _transaction_intent_path(repo, operation, old_id, new_id)
+    path.unlink(missing_ok=True)
+
+
+def _transaction_dir(repo: Path) -> Path:
+    """Get the transaction directory for a repo."""
+    tx_dir = repo / TRANSACTION_DIR
+    tx_dir.mkdir(parents=True, exist_ok=True)
+    return tx_dir
+
+
+def _transaction_intent_path(repo: Path, operation: str, old_id: str, new_id: str) -> Path:
+    """Generate path for a transaction intent file."""
+    tx_dir = _transaction_dir(repo)
+    # Sanitize IDs for filesystem
+    safe_old = re.sub(r"[^a-zA-Z0-9_.-]", "-", old_id)
+    safe_new = re.sub(r"[^a-zA-Z0-9_.-]", "-", new_id)
+    filename = f"{operation}-{safe_old}-{safe_new}{TRANSACTION_INTENT_SUFFIX}"
+    return tx_dir / filename
+
+
+def _write_transaction_intent(repo: Path, operation: str, old_id: str, new_id: str,
+                               old_claim_data: dict, new_claim_data: dict) -> Path:
+    """Write a durable transaction intent before executing the operation."""
+    intent = {
+        "schema_version": "ledger.transaction.v1",
+        "operation": operation,
+        "old_id": old_id,
+        "new_id": new_id,
+        "old_claim": old_claim_data,
+        "new_claim": new_claim_data,
+        "state": "prepared",
+        "created_at": _now(),
+    }
+    path = _transaction_intent_path(repo, operation, old_id, new_id)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        os.fchmod(fd, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(intent, f, sort_keys=True, separators=(",", ":"))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        Path(tmp_name).unlink(missing_ok=True)
+    return path
+
+
+def _read_transaction_intent(repo: Path, operation: str, old_id: str, new_id: str) -> dict | None:
+    """Read a transaction intent file if it exists."""
+    path = _transaction_intent_path(repo, operation, old_id, new_id)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _update_transaction_state(repo: Path, operation: str, old_id: str, new_id: str,
+                               state: str) -> None:
+    """Update the state of a transaction intent."""
+    path = _transaction_intent_path(repo, operation, old_id, new_id)
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["state"] = state
+        data["updated_at"] = _now()
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+        try:
+            os.fchmod(fd, 0o644)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, sort_keys=True, separators=(",", ":"))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, path)
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
+    except (json.JSONDecodeError, OSError):
+        pass
+
+
+def _claim_to_intent_dict(claim: ClaimRecord) -> dict:
+    """Convert a ClaimRecord to a dict suitable for transaction intent storage."""
+    # Use the same serialization as _claim_to_mapping but include all fields
+    data = asdict(claim)
+    data.pop("source_file", None)
+    raw = data.pop("raw", {}) or {}
+    result = {}
+    for key in (
+        "id", "statement", "topic", "type", "sources", "confidence", "valid_from",
+        "valid_until", "status", "supersedes", "superseded_by", "contradicts",
+        "relations", "created", "updated", "source_type", "source_ref", "source_hash", "note",
+    ):
+        if key in data:
+            result[key] = _json_ready(data[key])
+    # Include raw metadata
+    for key in ("schema_version", "operation", "recorded_at"):
+        if key in raw:
+            result[key] = raw[key]
+    return result
+
+
+def _intent_dict_to_claim(data: dict) -> ClaimRecord:
+    """Reconstruct a ClaimRecord from transaction intent dict."""
+    # Parse dates
+    valid_from = None
+    valid_until = None
+    if data.get("valid_from"):
+        try:
+            valid_from = date.fromisoformat(str(data["valid_from"])[:10])
+        except ValueError:
+            pass
+    if data.get("valid_until"):
+        try:
+            valid_until = date.fromisoformat(str(data["valid_until"])[:10])
+        except ValueError:
+            pass
+
+    return ClaimRecord(
+        id=data.get("id", ""),
+        statement=data.get("statement", ""),
+        topic=data.get("topic", ""),
+        type=data.get("type", ""),
+        sources=[
+            SourceRef(
+                ref=s.get("ref", ""),
+                quote=s.get("quote", ""),
+                locator=s.get("locator"),
+                source_type=s.get("source_type"),
+                source_hash=s.get("source_hash"),
+            )
+            for s in (data.get("sources") or []) if isinstance(s, dict)
+        ],
+        confidence=data.get("confidence", ""),
+        status=data.get("status", ""),
+        created=data.get("created", ""),
+        updated=data.get("updated", ""),
+        valid_from=valid_from,
+        valid_until=valid_until,
+        supersedes=data.get("supersedes"),
+        superseded_by=data.get("superseded_by"),
+        contradicts=data.get("contradicts", []),
+        relations=data.get("relations", []),
+        note=data.get("note"),
+        source_type=data.get("source_type"),
+        source_ref=data.get("source_ref"),
+        source_hash=data.get("source_hash"),
+        raw=data.get("raw", {}),
+    )
+
+
+def recover_transactions(repo: Path) -> list[str]:
+    """Recover incomplete transactions from intent files.
+
+    Returns list of actions taken.
+    """
+    tx_dir = _transaction_dir(repo)
+    if not tx_dir.is_dir():
+        return []
+
+    actions = []
+    for path in tx_dir.glob(f"*{TRANSACTION_INTENT_SUFFIX}"):
+        try:
+            intent = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        if intent.get("state") == "committed":
+            # Already done, clean up
+            path.unlink(missing_ok=True)
+            continue
+
+        operation = intent.get("operation")
+        old_id = intent.get("old_id")
+        new_id = intent.get("new_id")
+        old_claim_data = intent.get("old_claim")
+        new_claim_data = intent.get("new_claim")
+        state = intent.get("state", "prepared")
+
+        # Check current state of claims
+        old_claim = _find_claim(repo, old_id) if old_id else None
+        new_claim = _find_claim(repo, new_id) if new_id else None
+
+        try:
+            if operation == "supersede":
+                if state == "prepared":
+                    # Operation was started but neither claim written
+                    # Check if old claim is still active
+                    if old_claim and old_claim.status == "active" and not new_claim:
+                        # Nothing done, operation never materialized
+                        _update_transaction_state(repo, operation, old_id, new_id, "aborted")
+                        path.unlink(missing_ok=True)
+                        actions.append(f"aborted supersede {old_id}->{new_id} (never started)")
+                    elif old_claim and old_claim.status == "active" and new_claim:
+                        # Old claim exists, new claim was written, need to finish old
+                        if new_claim.supersedes == old_id:
+                            old_claim.status = "superseded"
+                            old_claim.superseded_by = new_id
+                            old_claim.updated = _now()
+                            _write_claim(repo, _prepare_claim(old_claim, operation="supersede"))
+                            _update_transaction_state(repo, operation, old_id, new_id, "committed")
+                            path.unlink(missing_ok=True)
+                            actions.append(f"recovered supersede {old_id}->{new_id} (wrote old claim)")
+                        else:
+                            actions.append(f"inconsistent supersede {old_id}->{new_id}: new claim supersedes={new_claim.supersedes}")
+                    elif old_claim and old_claim.status == "superseded" and new_claim:
+                        # Both claims already in final state
+                        if old_claim.superseded_by == new_id and new_claim.supersedes == old_id:
+                            _update_transaction_state(repo, operation, old_id, new_id, "committed")
+                            path.unlink(missing_ok=True)
+                            actions.append(f"completed supersede {old_id}->{new_id} (already consistent)")
+                        else:
+                            actions.append(f"inconsistent supersede {old_id}->{new_id}: reciprocal links mismatch")
+                    else:
+                        actions.append(f"cannot recover supersede {old_id}->{new_id}: unexpected state")
+
+            elif operation == "contest_linked":
+                if state == "prepared":
+                    if old_claim and old_claim.status == "active" and not new_claim:
+                        # Contest claim never written
+                        _update_transaction_state(repo, operation, old_id, new_id, "aborted")
+                        path.unlink(missing_ok=True)
+                        actions.append(f"aborted contest {old_id}->{new_id} (never started)")
+                    elif old_claim and old_claim.status == "active" and new_claim:
+                        # Contest claim written but target not updated
+                        if new_claim.contradicts == [old_id] and f"disputes:{old_id}" in new_claim.relations:
+                            old_claim.status = "contested"
+                            old_claim.confidence = "contested"
+                            old_claim.updated = _now()
+                            pointer = f"contested_by={new_id}"
+                            old_claim.note = pointer if not old_claim.note else f"{old_claim.note}; {pointer}"
+                            _write_claim(repo, _prepare_claim(old_claim, operation="contest"))
+                            _update_transaction_state(repo, operation, old_id, new_id, "committed")
+                            path.unlink(missing_ok=True)
+                            actions.append(f"recovered contest {old_id}->{new_id} (updated target)")
+                        else:
+                            actions.append(f"inconsistent contest {old_id}->{new_id}: new claim links mismatch")
+                    elif old_claim and old_claim.status == "contested" and new_claim:
+                        if f"contested_by={new_id}" in (old_claim.note or ""):
+                            _update_transaction_state(repo, operation, old_id, new_id, "committed")
+                            path.unlink(missing_ok=True)
+                            actions.append(f"completed contest {old_id}->{new_id} (already consistent)")
+                        else:
+                            actions.append(f"inconsistent contest {old_id}->{new_id}: note mismatch")
+                    else:
+                        actions.append(f"cannot recover contest {old_id}->{new_id}: unexpected state")
+        except Exception as e:
+            actions.append(f"error recovering {path.name}: {e}")
+
+    return actions
