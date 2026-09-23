@@ -17,10 +17,12 @@ from pathlib import Path
 from ._signals import ObservationRejected
 from .models import safe_strings
 
-# The observed repository's own config is controlled by the observed actor.
-# Command-line config outranks it: never run its fsmonitor hook, which executes
-# arbitrary programs and can report which paths git treats as unchanged.
-HARDENED_CONFIG = ("-c", "core.fsmonitor=false")
+# The observed repository's own config and refs are controlled by the observed
+# actor. Command-line options outrank them: never run its fsmonitor hook, which
+# executes arbitrary programs and can report which paths git treats as unchanged,
+# and never honour refs/replace/, which substitutes one object for another, so a
+# replaced baseline or HEAD commit could make committed or staged changes vanish.
+HARDENED_CONFIG = ("-c", "core.fsmonitor=false", "--no-replace-objects")
 
 
 def environment() -> dict[str, str]:

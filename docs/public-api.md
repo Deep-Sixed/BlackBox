@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.6.1
+# Supported public API — BlackBox 0.6.2
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -20,6 +20,8 @@ events it records; see [hooks](hooks.md). The Python operations are unchanged;
 `SourceRecord.authority` gains the `host_reported` value.
 Package 0.6.1 keeps schema v4 and fixes the Git observer's working-tree reads
 (below) and the CLI's handling of deeply nested input files.
+Package 0.6.2 keeps schema v4; the Git observer ignores the observed repository's
+replace refs, which could otherwise hide committed or staged changes.
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.

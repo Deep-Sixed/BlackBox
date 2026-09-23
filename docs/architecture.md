@@ -20,8 +20,9 @@ Receipt integrity is separate from authority. Caller observations are always
 unverified, regardless of their supplied digest. Local Git metadata is marked
 locally observed, not authenticated remote identity. The observed repository's
 own config is untrusted: the observer disables its `core.fsmonitor` hook, which
-could run programs or hide changed paths, strips inherited `GIT_*` variables and
-takes no optional index locks. Unstaged changes are found by hashing raw
+could run programs or hide changed paths, ignores its replace refs, which could
+swap the commits it diffs, strips inherited `GIT_*` variables and takes no
+optional index locks. Unstaged changes are found by hashing raw
 working-tree bytes against the index, so Git never runs the repository's clean
 filters on the observer's behalf and `assume-unchanged` flags cannot hide edits;
 see the [threat model](threat-model.md). Local process/OS ownership is

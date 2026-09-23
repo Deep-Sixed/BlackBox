@@ -667,6 +667,44 @@ def test_many_directories_do_not_exhaust_file_descriptors(repo):
     assert result.stdout.strip() == "['d150/f']"
 
 
+def replace_commit(git, original, tree):
+    """Substitute another commit for `original` through refs/replace/."""
+    fake = git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit-tree",
+        tree,
+        "-m",
+        "substitute",
+    )
+    git("replace", original, fake)
+
+
+def test_replaced_baseline_cannot_hide_committed_changes(repo):
+    root, git = repo
+    baseline = git("rev-parse", "HEAD")
+    (root / "tracked.txt").write_text("agent change\n")
+    (root / "added.txt").write_text("added\n")
+    commit_all(git, "agent work")
+    replace_commit(git, baseline, git("rev-parse", "HEAD^{tree}"))
+    assert git("diff", "--name-only", baseline, "HEAD") == ""  # plain Git is fooled
+    result = collect_git(root, baseline)
+    assert result["commit_before"] == baseline
+    assert result["committed_delta"] == ["added.txt", "tracked.txt"]
+
+
+def test_replaced_head_cannot_hide_staged_changes(repo):
+    root, git = repo
+    (root / "tracked.txt").write_text("staged edit\n")
+    git("add", "tracked.txt")
+    replace_commit(git, git("rev-parse", "HEAD"), git("write-tree"))
+    assert git("diff", "--cached", "--name-only") == ""  # plain Git is fooled
+    result = collect_git(root)
+    assert result["staged_delta"] == result["working_tree_delta"] == ["tracked.txt"]
+
+
 def test_local_observer_authority_cannot_be_claimed_by_input(
     database, capture_request, repo
 ):
