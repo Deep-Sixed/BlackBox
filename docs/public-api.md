@@ -106,7 +106,10 @@ The public Pydantic result models are frozen and their collections are tuples:
   only difference is a legitimate clean filter (for example LFS or line-ending
   conversion) counts as changed, `assume-unchanged` flags are ignored, and a
   submodule counts only when a different commit is checked out. Since 0.6.1,
-  like Git, a path under a symlinked or non-directory parent counts as deleted
+  a supplied repository subdirectory is normalized to the filesystem-discovered
+  worktree root (without trusting `core.worktree`), so every path is repository-
+  root-relative and changes elsewhere in the worktree remain visible. Like Git,
+  a path under a symlinked or non-directory parent counts as deleted
   (the symlink is never followed), a sparse-checkout (skip-worktree) path counts
   only if it is present and differs, and a submodule without a checked-out
   commit counts as changed rather than failing the capture.

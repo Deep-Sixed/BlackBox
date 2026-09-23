@@ -480,6 +480,44 @@ def git_diff_names(root):
     return sorted(p for p in listing.decode().split("\0") if p)
 
 
+def test_subfolder_observation_is_repo_wide_and_ignores_core_worktree(
+    repo, tmp_path
+):
+    root, git = repo
+    (root / "sub").mkdir()
+    (root / "sub" / "f").write_text("f\n")
+    (root / "sub" / "staged").write_text("staged\n")
+    (root / "committed").write_text("before\n")
+    commit_all(git, "subfolder baseline")
+    baseline = git("rev-parse", "HEAD")
+
+    (root / "committed").write_text("after\n")
+    commit_all(git, "top-level committed change")
+    (root / "sub" / "staged").write_text("index change\n")
+    git("add", "sub/staged")
+    (root / "sub" / "f").write_text("dirty in sub\n")
+    (root / "tracked.txt").write_text("dirty at top\n")
+    (root / "sub" / "new").write_text("untracked\n")
+
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    (decoy / "decoy.txt").write_text("not the worktree\n")
+    git("config", "core.worktree", str(decoy))
+
+    from_root = collect_git(root, baseline)
+    from_subfolder = collect_git(root / "sub", baseline)
+    assert from_subfolder == from_root
+    assert from_subfolder["committed_delta"] == ["committed"]
+    assert from_subfolder["staged_delta"] == ["sub/staged"]
+    assert from_subfolder["unstaged_delta"] == ["sub/f", "tracked.txt"]
+    assert from_subfolder["working_tree_delta"] == [
+        "sub/f",
+        "sub/staged",
+        "tracked.txt",
+    ]
+    assert from_subfolder["untracked_files"] == ["sub/new"]
+
+
 def test_symlinked_parent_is_not_followed_out_of_the_repository(repo, tmp_path):
     root, git = repo
     (root / "dir").mkdir()

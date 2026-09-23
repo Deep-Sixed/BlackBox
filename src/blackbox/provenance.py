@@ -32,9 +32,15 @@ def environment() -> dict[str, str]:
     return env
 
 
-def git(repo: Path, *args: str) -> bytes:
+def git(
+    repo: Path, *args: str, work_tree: Path | None = None
+) -> bytes:
+    command = ["git", *HARDENED_CONFIG, "-C", str(repo)]
+    if work_tree is not None:
+        # Command-line --work-tree outranks an observed repository's core.worktree.
+        command.append(f"--work-tree={work_tree}")
     result = subprocess.run(
-        ["git", *HARDENED_CONFIG, "-C", str(repo), *args],
+        [*command, *args],
         capture_output=True,
         check=False,
         env=environment(),
@@ -45,14 +51,37 @@ def git(repo: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def paths(repo: Path, *args: str) -> list[str]:
+def paths(
+    repo: Path, *args: str, work_tree: Path | None = None
+) -> list[str]:
     return sorted(
         {
             p.decode("utf-8", "surrogateescape")
-            for p in git(repo, *args).split(b"\0")
+            for p in git(repo, *args, work_tree=work_tree).split(b"\0")
             if p
         }
     )
+
+
+def repository_root(repo: Path) -> Path:
+    """Find the nearest filesystem worktree root without trusting core.worktree."""
+
+    current = repo
+    while True:
+        marker = current / ".git"
+        try:
+            mode = os.lstat(marker).st_mode
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISDIR(mode) or stat.S_ISREG(mode):
+                return current
+            # Git does not treat a symlinked .git marker as a worktree root.
+            raise ValueError("Git metadata collection failed")
+        parent = current.parent
+        if parent == current:
+            raise ValueError("Git metadata collection failed")
+        current = parent
 
 
 def blob_id(algorithm: str, chunks, size: int) -> str | None:
@@ -196,11 +225,21 @@ def unstaged_paths(root: Path) -> list[str]:
     `git diff` would compare content through the repository's clean filters,
     which are programs the observed actor can configure; hash raw bytes instead.
     """
-    algorithm = git(root, "rev-parse", "--show-object-format").decode().strip()
+    algorithm = (
+        git(root, "rev-parse", "--show-object-format", work_tree=root).decode().strip()
+    )
     if algorithm not in ("sha1", "sha256"):
         raise ValueError("unsupported Git object format")
     filemode = (
-        git(root, "config", "--type=bool", "--default=true", "--get", "core.fileMode")
+        git(
+            root,
+            "config",
+            "--type=bool",
+            "--default=true",
+            "--get",
+            "core.fileMode",
+            work_tree=root,
+        )
         .decode()
         .strip()
         == "true"
@@ -209,7 +248,9 @@ def unstaged_paths(root: Path) -> list[str]:
     tree = Worktree(root)
     try:
         # -t prefixes each entry with a status tag; "S" marks skip-worktree.
-        for record in git(root, "ls-files", "--stage", "-t", "-z").split(b"\0"):
+        for record in git(
+            root, "ls-files", "--stage", "-t", "-z", work_tree=root
+        ).split(b"\0"):
             if not record:
                 continue
             meta, path = record.split(b"\t", 1)
@@ -231,26 +272,55 @@ def unstaged_paths(root: Path) -> list[str]:
 
 
 def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
-    root = Path(repo).expanduser().resolve()
-    head = git(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+    location = Path(repo).expanduser().resolve()
+    root = repository_root(location)
+    head = (
+        git(root, "rev-parse", "--verify", "HEAD^{commit}", work_tree=root)
+        .decode()
+        .strip()
+    )
     before = None
     if baseline is not None:
         # Full object IDs only: no options, pathspecs, or moving symbolic refs.
         if not re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", baseline):
             raise ValueError("baseline must be a full commit object ID")
         before = (
-            git(root, "rev-parse", "--verify", baseline + "^{commit}").decode().strip()
+            git(
+                root,
+                "rev-parse",
+                "--verify",
+                baseline + "^{commit}",
+                work_tree=root,
+            )
+            .decode()
+            .strip()
         )
     staged = paths(
-        root, "diff", "--cached", "--name-only", "--no-renames", "-z", head, "--"
+        root,
+        "diff",
+        "--cached",
+        "--name-only",
+        "--no-renames",
+        "-z",
+        head,
+        "--",
+        work_tree=root,
     )
     unstaged = unstaged_paths(root)
     result = {
         "commit_before": before,
         "commit_after": head,
-        "branch": git(root, "branch", "--show-current").decode().strip(),
+        "branch": git(root, "branch", "--show-current", work_tree=root).decode().strip(),
         "committed_delta": paths(
-            root, "diff", "--name-only", "--no-renames", "-z", before, head, "--"
+            root,
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            before,
+            head,
+            "--",
+            work_tree=root,
         )
         if before
         else None,
@@ -258,10 +328,15 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
         "unstaged_delta": unstaged,
         "working_tree_delta": sorted(set(staged) | set(unstaged)),
         "untracked_files": paths(
-            root, "ls-files", "--others", "--exclude-standard", "-z"
+            root,
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            work_tree=root,
         ),
     }
-    if git(root, "rev-parse", "HEAD").decode().strip() != head:
+    if git(root, "rev-parse", "HEAD", work_tree=root).decode().strip() != head:
         raise ValueError("Git HEAD changed during capture; retry")
     try:
         safe_strings(result)

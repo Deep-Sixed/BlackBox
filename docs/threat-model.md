@@ -69,6 +69,12 @@ ordinary text.
   programs or read working-tree file contents. A Git feature that does
   would reopen this surface. Full isolation means running the observer in a
   sandbox (see production gaps).
+- **Large-worktree observation cost.** To avoid trusting file timestamps,
+  repository filters or index hiding flags, each Git snapshot hashes the raw
+  bytes of every present stage-0 tracked regular file. Work is therefore
+  proportional to tracked working-tree bytes; on very large or cold repositories,
+  `hook --git` can add noticeable turn-end latency. This is the deliberate
+  availability/performance cost of the stronger observation rule.
 - **Submodule contents.** A submodule counts as changed only when a different
   commit is checked out. Uncommitted edits inside a submodule are not observed,
   because inspecting them would mean running Git in that repository's working
