@@ -18,6 +18,18 @@ Network services, remote observer transports, and deployment integrations
 are outside the current core runtime. Tool/process execution observation is
 planned; the current runtime does not independently witness process execution.
 
+## Host lifecycle hooks
+
+`blackbox hook` lets the agent's host runtime, such as Claude Code, record
+what the agent does without the agent reporting it. The host runs the command on
+its own lifecycle events (prompt submitted, before and after each tool call,
+turn end) and pipes the event as JSON on stdin. BlackBox keeps the event and
+tool names and a digest of the payload, never the payload itself, under a
+separate `host_reported` authority (schema v4). With `--git`
+it also takes its own Git snapshot at the end of each turn. The command never
+blocks the agent. See [docs/hooks.md](docs/hooks.md) for the settings snippet
+and what the records do and do not prove.
+
 ## Local use
 
 The package supports Python 3.14 (`>=3.14,<3.15`). CI and the release
@@ -53,13 +65,13 @@ against, what it deliberately does not, and what a production deployment adds.
 [docs/canonical-json.md](docs/canonical-json.md) specifies the exact bytes every
 digest covers, for independent verifiers.
 
-See [docs/sqlite-contract.md](docs/sqlite-contract.md) for schema v3, atomic
+See [docs/sqlite-contract.md](docs/sqlite-contract.md) for schema v4, atomic
 upgrades from supported older schemas, and integrity-check semantics. Run `blackbox --database
 ./blackbox.sqlite3 init` with writer access to upgrade before using read-only queries.
 
 ## Python integration
 
-BlackBox 0.5.1 exposes supported operations and typed results through `import
+BlackBox 0.6.0 exposes supported operations and typed results through `import
 blackbox`. Use `initialize`, `capture`, `append_claim`, `get_session`,
 `get_timeline`, `get_claims`, `link_evidence`, `get_evidence_links`,
 `get_claim_relations`, `check_integrity`, and `get_chain_head`. See the

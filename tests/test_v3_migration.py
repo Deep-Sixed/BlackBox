@@ -78,8 +78,8 @@ def test_v3_failure_rolls_back_and_actual_v2_release_still_reads(
 
     def reject_final(db, version):
         original_validate(db, version)
-        if version == 3:
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+        if version == 4:
+            assert db.execute("PRAGMA user_version").fetchone()[0] == 4
             raise RuntimeError("final validation failure")
 
     if failure == "final_validation":

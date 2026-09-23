@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.5.1
+# Supported public API — BlackBox 0.6.0
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -14,6 +14,10 @@ Package 0.5.0 keeps schema v3 and adds chain-head export, anchored integrity
 checks and the first broken receipt position; see [chain anchoring](#chain-anchoring).
 Package 0.5.1 keeps schema v3; `check_integrity` also recomputes evidence-link IDs
 and checks that a link follows the evidence it references.
+Package 0.6.0 adds the `blackbox hook` CLI command for host lifecycle hooks and
+schema v4, whose only change is the `host_reported` source authority for the
+events it records; see [hooks](hooks.md). The Python operations are unchanged;
+`SourceRecord.authority` gains the `host_reported` value.
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -34,6 +38,7 @@ Future public breaking changes require an explicit versioned contract change.
 | `migrations.schema_digest`, `schema_objects`, `validate`, `install`, `v002.upgrade` | INTERNAL | Only writer initialization owns schema evolution; no direct migration API. |
 | `models.canonical`, `identity`, `safe_strings`, model validators | INTERNAL | IDs, serialization and input validation are accessed through public operations. |
 | `provenance.git`, `paths`, `collect_git` | INTERNAL | Opt into local Git observation using `capture(repo=..., baseline=...)`; do not invoke collection internals. |
+| `api._capture_host_report`, `hooks.hook_requests` | INTERNAL | The one code path that records `host_reported` authority. Use the `blackbox hook` CLI; a public Python entry point would let any caller claim host authority. |
 | `cli.main` | ADMINISTRATIVE CLI entry point | The supported executable is `blackbox`; importing `main` is not an integration contract. |
 
 ## Operations
@@ -44,7 +49,7 @@ store is introduced.
 
 | Operation | Return | Storage access |
 | --- | --- | --- |
-| `initialize(database)` | `InitializationResult(status="initialized", schema_version=3)` | Writer; creates or migrates. Idempotent. |
+| `initialize(database)` | `InitializationResult(status="initialized", schema_version=4)` | Writer; creates or migrates. Idempotent. |
 | `capture(database, request, *, repo=None, baseline=None)` | `CaptureResult(session_id, status, duplicate)` | Writer; creates/migrates as needed, reserves and captures using existing transactions. |
 | `append_claim(database, session, claim, *, target=None, relation=None)` | `ClaimResult(claim_id)` | Writer; may initialize/migrate, then requires an existing committed session. |
 | `link_evidence(database, session, link)` | `EvidenceLinkResult(link_id)` | Writer; requires committed origin and existing references. |
@@ -62,7 +67,7 @@ current snapshot. Timeline and claim-query results are ordered by event sequence
 Session component collections are ordered by canonical ID except events, which
 are chronological. `topic` uses the input identifier grammar.
 
-Reader operations never create or migrate a database. A recognized v1 or v2 database
+Reader operations never create or migrate a database. A recognized v1, v2 or v3 database
 raises `MigrationRequiredError`; call `initialize` with writer access, then retry
 the read. Capture and claim writes retain automatic writer initialization for
 CLI compatibility. Deployments can call `initialize` at startup to own this
@@ -88,6 +93,9 @@ The public Pydantic result models are frozen and their collections are tuples:
 - Canonical record projections: `SessionRecord`, `SourceRecord`,
   `ObservationRecord`, `EvidenceRecord`, `ClaimRecord`, `ArtifactRecord`,
   `FailureRecord`, `TimelineEvent`. These are detached copies, not writable rows.
+- `SourceRecord.authority` is `caller_asserted`, `local_git` (the built-in Git
+  observer) or, since 0.6.0, `host_reported` (an event delivered by `blackbox
+  hook`). Consumers matching on it exhaustively must handle the new value.
 - Typed observation data: `CallerObservation` and `GitObservation`. Their fields
   retain the existing caller/local observer distinction.
   `GitObservation.unstaged_delta` lists tracked paths whose raw working-tree
@@ -216,7 +224,9 @@ prints only `status`; `claim` prints `claim_id`; `check` prints `ok`,
 prints `sequence` and `digest`; `check --anchor FILE` reads that JSON back, so
 `blackbox head > anchor.json` round-trips. An invalid anchor prints the bounded
 `invalid_input` error rather than a check envelope. Exit codes remain 0 for success, 1 for operation or
-integrity failure, and 2 for argparse usage errors. Operation failures now expose
+integrity failure, and 2 for argparse usage errors, except `hook`: it never
+exits 2, prints nothing on stdout and reports failures on stderr (see
+[hooks](hooks.md)). Operation failures now expose
 bounded `error` and `retryable` fields. Input-file read/decode failures report
 `input_unavailable_or_invalid`. `check` retains its result envelope for errors,
 including `schema_integrity`, `sqlite_integrity` and `database_unavailable`.
@@ -226,7 +236,7 @@ external consumer in isolated Python mode, outside the checkout. That consumer
 uses only public imports for initialize, capture, append claim, reconstruction,
 timeline, claims, attributed evidence links, cross-session retraction,
 integrity and chain-head anchoring. CLI smoke checks against the same installed
-wheel run `--help`, `init`, two `capture`s, a cross-session `claim --relation
+wheel run `--help`, `init`, two `capture`s, a `hook` event, a cross-session `claim --relation
 retracts`, `claims`, `check`, `head` and `check --anchor`; evidence links have
 no CLI command. Released-v1 and
 released-v2 migration/rollback tests remain in the full suite.

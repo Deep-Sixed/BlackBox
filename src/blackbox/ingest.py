@@ -137,16 +137,28 @@ def ingest(
     *,
     repo: str | Path | None = None,
     baseline: str | None = None,
+    host: bool = False,
 ) -> dict:
+    """Record a capture. `host=True` is the host lifecycle-hook code path.
+
+    Its observations get `host_reported` authority; it carries no claims or
+    artifacts, and binds its request ID to that path so a caller submission
+    with the same ID conflicts instead of being taken for the host's report.
+    """
     # Revalidate even model instances: do not trust model_construct or mutable lists.
     capture = Capture.model_validate(
         capture.model_dump() if isinstance(capture, Capture) else capture
     )
     if baseline is not None and repo is None:
         raise ValueError("baseline requires a repository")
+    if host and (capture.claims or capture.artifacts or repo is not None):
+        raise ValueError("host reports carry observations only")
     request = capture.model_dump(mode="json")
     locator = str(Path(repo).expanduser().resolve()) if repo is not None else None
-    fingerprint = identity("input", [request, locator, baseline])
+    material = [request, locator, baseline]
+    # Caller fingerprints keep their pre-v4 form.
+    fingerprint = identity("input", [*material, "host_reported"] if host else material)
+    authority = "host_reported" if host else "caller_asserted"
     session = identity("ses", capture.request_id)
     connection = connect(database)
     try:
@@ -184,9 +196,7 @@ def ingest(
                     source_id = source(connection, session, "blackbox.git", "local_git")
                     observation(connection, session, source_id, "git", data, local=True)
                 for item in capture.observations:
-                    source_id = source(
-                        connection, session, item.source, "caller_asserted"
-                    )
+                    source_id = source(connection, session, item.source, authority)
                     observation(
                         connection,
                         session,

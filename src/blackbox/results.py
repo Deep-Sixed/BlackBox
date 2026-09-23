@@ -36,7 +36,7 @@ class SourceRecord(_Result):
     id: str
     session_id: str
     identity: str
-    authority: Literal["caller_asserted", "local_git"]
+    authority: Literal["caller_asserted", "local_git", "host_reported"]
 
 
 class CallerObservation(_Result):

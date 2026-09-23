@@ -41,11 +41,11 @@ def test_supported_exports_are_deliberate():
         "BaseModel",
     ):
         assert name not in bb.__all__
-    assert bb.__version__ == "0.5.1"
+    assert bb.__version__ == "0.6.0"
 
 
 def test_typed_detached_results(database, request_data):
-    assert bb.initialize(database).schema_version == 3
+    assert bb.initialize(database).schema_version == 4
     captured = bb.capture(database, request_data)
     assert isinstance(captured, bb.CaptureResult)
     view = bb.get_session(database, captured.session_id)
@@ -129,7 +129,7 @@ def test_real_writer_lock_is_retryable(database, request_data):
     finally:
         connection.rollback()
         connection.close()
-    assert bb.initialize(database).schema_version == 3
+    assert bb.initialize(database).schema_version == 4
 
 
 @pytest.mark.parametrize(
@@ -165,7 +165,7 @@ def test_readonly_old_database_requires_explicit_writer(v1_database, released_v1
         with pytest.raises(bb.MigrationRequiredError):
             call()
         assert v1_database.read_bytes() == before
-    assert bb.initialize(v1_database).schema_version == 3
+    assert bb.initialize(v1_database).schema_version == 4
     assert (
         bb.get_session(v1_database, session).model_dump(mode="json")
         == released_v1[1]["records"][0]
@@ -175,7 +175,7 @@ def test_readonly_old_database_requires_explicit_writer(v1_database, released_v1
 
 def test_capture_writer_can_migrate(v1_database, request_data):
     assert bb.capture(v1_database, request_data).status == "COMMITTED"
-    assert bb.check_integrity(v1_database).schema_version == 3
+    assert bb.check_integrity(v1_database).schema_version == 4
 
 
 def test_schema_error_is_distinct(database):

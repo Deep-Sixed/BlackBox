@@ -6,11 +6,11 @@ from contextlib import closing
 
 from .._signals import EvidenceIssue, SchemaIssue
 from ..models import canonical
-from . import v001, v002, v003
+from . import v001, v002, v003, v004
 
-DEFINITIONS = {1: v001.DDL, 2: v002.DDL, 3: v003.DDL}
-UPGRADES = {1: v002.upgrade, 2: v003.upgrade}
-CURRENT = 3
+DEFINITIONS = {1: v001.DDL, 2: v002.DDL, 3: v003.DDL, 4: v004.DDL}
+UPGRADES = {1: v002.upgrade, 2: v003.upgrade, 3: v004.upgrade}
+CURRENT = 4
 
 
 def schema_digest(version=CURRENT):
