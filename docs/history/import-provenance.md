@@ -1,5 +1,7 @@
 # Flight Recorder to BlackBox provenance
 
+> Historical migration record. This document is retained for repository provenance and is not part of the current BlackBox architecture or compatibility contract.
+
 This repository was initialized from the Flight Recorder subtree in EVECOR and
 then continued as BlackBox. The publication boundary is software-only: tracked
 Flight Recorder `storage/` material is operational evidence/history and is not

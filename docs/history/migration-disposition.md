@@ -1,5 +1,7 @@
 # Flight Recorder capability disposition — PR #4 disposition
 
+> Historical migration record. This document is retained for repository provenance and is not part of the current BlackBox architecture or compatibility contract.
+
 **Status: core semantic disposition resolved for package 0.4.0 / schema v3.**
 This inventory is not a retirement authorization, a claim of production parity,
 or a statement that the migration is complete. No donor or EVECOR runtime changes
@@ -12,10 +14,10 @@ The donor is `EVECOR/governance/flight-recorder` at
 Ledger working patch. The inspected donor HEAD is still that commit. The current
 four-file diff exactly matches the saved patch, SHA-256
 `f9bf68e44481088ddbb2b994a430379e8ba37df25c46cabb0514f736af04a91a`.
-[Software inventory](flight-recorder-source-inventory.json) records all 58 tracked
+[Software inventory](source-inventory.json) records all 58 tracked
 non-storage files and their inspected working-tree hashes. Hashes for the four
 modified files describe the preserved working state, not the committed baseline.
-The private extraction and bundle remain as recorded in [provenance](provenance.md).
+The private extraction and bundle remain as recorded in [provenance](import-provenance.md).
 
 The review covers module responsibilities, callables, input models, persistence,
 read APIs, tests, declared entry points and deployment definitions. It does not
@@ -25,7 +27,7 @@ runtime verification remain WP #5; a file inventory cannot substitute for them.
 
 ## Approved semantic disposition
 
-The operator approved the narrowed [relationship contract](trace-relationships.md):
+The operator approved the narrowed [relationship contract](../trace-relationships.md):
 `actor assertion != observer observation != BlackBox persistence`.
 
 | Gap | Donor responsibility | Final disposition in PR #4 |

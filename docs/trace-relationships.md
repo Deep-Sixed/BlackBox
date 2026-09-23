@@ -51,7 +51,7 @@ identified source and explicit semantics; causality requires explicit relations.
 
 Schema v3 adds only `claim_relations` and `evidence_links`, their indexes and
 immutability triggers. Claims' historical storage columns and all v1/v2 canonical
-rows, event sequences and existing record receipts remain unchanged. Legacy
+rows, event sequences and existing record receipts remain unchanged. Earlier
 claim target/relation columns remain populated for supersedes/contests; retractions
 use only the new relation table. Public projections resolve the relation table.
 Migration backfills historical relations against their existing CLAIM events;
@@ -65,14 +65,16 @@ Writer operations may initialize/migrate. Readers never initialize or migrate;
 old stores require writer initialization. Source schema, evidence and existing
 receipt integrity must pass before migration. DDL, backfill, metadata and version
 changes commit atomically or roll back together. Original schema definitions stay
-frozen. No operational donor data is imported.
+frozen.
 
-## Disposition and future observers
+## Scope and observers
 
-Claim evidence links and cross-session corrections are retained in this bounded
-form. Effective validity windows, generic notes and mutable statuses retire from
-core. BM25, semantic ranking and interpretation belong downstream. Tool/process
-execution is the first future independent observer boundary, followed by
-Git/filesystem/CI, model traffic and evaluation-specific observation as needed.
-PR #4 adds no observer runtime, gateway, Actor/Observer/Evaluation/Trace tables,
-EVECOR adapter or policy decisions.
+Claim evidence links and cross-session corrections use the bounded forms above.
+Effective validity windows, generic notes and mutable statuses are outside core.
+BM25, semantic ranking and interpretation belong to downstream consumers.
+
+BlackBox already independently observes local Git metadata. Tool/process execution
+is the next planned observer boundary: the first execution observer. Additional
+filesystem, CI, model-traffic and evaluation-specific observers are future work.
+The current core has no execution-observer runtime or gateway and makes no policy
+decisions.

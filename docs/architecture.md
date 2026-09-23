@@ -24,9 +24,9 @@ Only one superseding successor is permitted. A chronological event sequence and
 UTC recording times support reconstruction. Derived summaries are read-only views,
 never source records.
 
-The Python library and CLI are the initial API. HTTP, MCP deployment, production
-data conversion, retention/deletion, external authentication, and EVECOR cutover
-are separate work. No legacy client compatibility is promised.
+The Python library and CLI are the supported interfaces. Network transports,
+production deployment integration, retention/deletion, external authentication,
+and remote observer infrastructure are separate system concerns.
 
 Schema v2 adds atomic forward migration from released v1 databases and chained
 receipts for all canonical record types. Read-only handles never migrate. See the

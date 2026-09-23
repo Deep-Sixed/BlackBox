@@ -1,8 +1,6 @@
 # BlackBox
 
-Evidence-first execution recorder for capturing provenance, chronology, and reconstructable system history.
-
-BlackBox is a refraction of Flight Recorder. The original implementation and outstanding Ledger work are preserved in Git before the standalone SQLite architecture is introduced.
+BlackBox is an independent execution-trace recorder for AI agents, models, tools and evaluations. It observes actions outside the acting agent, preserves provenance and chronology in a durable trace, and enables later audit and reconstruction without making policy decisions itself.
 
 ## Current contract
 
@@ -11,9 +9,14 @@ database. Producers submit observations, claims and artifact references. BlackBo
 validates their shape, records deterministic receipts, and appends lifecycle
 events in one durable local store.
 
-The first supported surface is the Python package and `blackbox` CLI. There is
-no HTTP service, MCP gateway, EVECOR deployment cutover, legacy Ledger/Recon/Recall
-compatibility layer, or production data migration in this initial bring-up.
+The built-in Git observer independently collects local repository metadata.
+Caller-submitted observations remain assertions. Claims can be linked to evidence
+and corrected across sessions while preserving their sources and chronology.
+
+BlackBox currently provides a local Python API and CLI backed by SQLite.
+Network services, remote observer transports, and deployment integrations
+are outside the current core runtime. Tool/process execution observation is
+planned; the current runtime does not independently witness process execution.
 
 ## Local use
 
@@ -31,33 +34,21 @@ rejects unknown schema identities. `storage/`, `spool/`, local databases,
 verification records, caches, logs, build output and environment files are
 ignored.
 
-## Migration boundary
-
-`v0.0.0-original` is the original publishable Flight Recorder software baseline:
-the Flight Recorder subtree extracted from EVECOR with operational
-`storage/` evidence removed, before any BlackBox rebranding, SQLite redesign, or
-behavioral changes.
-
-The exact committed Flight Recorder extraction is preserved privately under
-`/mnt/jarvis-data/migration-backups/blackbox/20260922T070643Z/`. Published
-BlackBox history inherits software provenance only. It does not publish Flight
-Recorder operational evidence or historical runtime artifacts.
-
-See [docs/provenance.md](docs/provenance.md) for the measured tree hashes,
-excluded paths, SHA-256 digests, and donor-to-published history mapping.
+## Evidence and storage
 
 See [docs/evidence-model.md](docs/evidence-model.md) for the claim,
 observation, receipt, integrity, authority, verification and provenance
-vocabulary used by the native BlackBox contract.
+vocabulary used by the BlackBox contract.
 
 See [docs/sqlite-contract.md](docs/sqlite-contract.md) for schema v3, atomic
-upgrades from `v0.1.0`, and integrity-check semantics. Run `blackbox --database
+upgrades from supported older schemas, and integrity-check semantics. Run `blackbox --database
 ./blackbox.sqlite3 init` with writer access to upgrade before using read-only queries.
 
 ## Python integration
 
 BlackBox 0.4.0 exposes supported operations and typed results through `import
 blackbox`. Use `initialize`, `capture`, `append_claim`, `get_session`,
-`get_timeline`, `get_claims`, and `check_integrity`. See the
+`get_timeline`, `get_claims`, `link_evidence`, `get_evidence_links`,
+`get_claim_relations`, and `check_integrity`. See the
 [public API contract](docs/public-api.md) for input mappings, result types,
 bounded errors, retry behavior and migration ownership. Schema v3 adds [attributed evidence links and cross-session claim relations](docs/trace-relationships.md).
