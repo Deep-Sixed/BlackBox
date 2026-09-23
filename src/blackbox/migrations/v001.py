@@ -1,4 +1,4 @@
-"""Versioned SQLite schema; migrations run atomically and reject unknown versions."""
+"""Frozen v1 schema: the published v0.1.0 tables, all append-only."""
 
 VERSION = 1
 APPLICATION_ID = 0x42425831
@@ -64,12 +64,18 @@ DDL = [
     "CREATE INDEX session_events ON events(session_id, sequence)",
 ]
 
-for table in TABLES:
-    for operation in ("UPDATE", "DELETE"):
-        DDL.append(
-            f"CREATE TRIGGER {table}_no_{operation.lower()} BEFORE {operation} "
-            f"ON {table} BEGIN SELECT RAISE(ABORT, 'immutable history'); END"
-        )
+
+def immutability_triggers(tables):
+    """UPDATE and DELETE guards; every schema version appends them this way."""
+    return [
+        f"CREATE TRIGGER {table}_no_{operation.lower()} BEFORE {operation} "
+        f"ON {table} BEGIN SELECT RAISE(ABORT, 'immutable history'); END"
+        for table in tables
+        for operation in ("UPDATE", "DELETE")
+    ]
+
+
+DDL += immutability_triggers(TABLES)
 
 # Published v0.1.0 contract. Never derive this from the current schema.
 DIGEST = "75b723971fc692f55bab27b8b8264b134f9f3afeb51038ff5dd19e19350aec17"
