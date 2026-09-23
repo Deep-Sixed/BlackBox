@@ -22,6 +22,8 @@ from .models import safe_strings
 # executes arbitrary programs and can report which paths git treats as unchanged,
 # and never honour refs/replace/, which substitutes one object for another, so a
 # replaced baseline or HEAD commit could make committed or staged changes vanish.
+# Diffs likewise pass --ignore-submodules=none, which outranks diff.ignoreSubmodules
+# and .gitmodules `ignore` settings that would drop a changed gitlink.
 HARDENED_CONFIG = ("-c", "core.fsmonitor=false", "--no-replace-objects")
 
 
@@ -164,14 +166,15 @@ def entry_changed(
     mode: int,
     oid: str,
     algorithm: str,
-    filemode: bool,
     sparse: bool,
 ) -> bool:
     """Compare one stage-0 index entry with the working tree, without Git filters.
 
     This is raw-byte equality: content that differs only through a legitimate
     clean filter (for example LFS or line-ending conversion) counts as changed,
-    and assume-unchanged flags are ignored rather than trusted. A skip-worktree
+    and assume-unchanged flags and core.fileMode are ignored rather than trusted:
+    a filesystem without executable bits over-reports mode changes instead of
+    letting the observed repository switch the check off. A skip-worktree
     (sparse) entry that is absent is expected; one that is present is compared,
     so the flag cannot hide an edit.
     """
@@ -216,7 +219,7 @@ def entry_changed(
         opened = os.fstat(handle)
         if not stat.S_ISREG(opened.st_mode):
             return True
-        if filemode and bool(opened.st_mode & 0o100) != bool(mode & 0o100):
+        if bool(opened.st_mode & 0o100) != bool(mode & 0o100):
             return True
         return blob_id(algorithm, read_chunks(handle), opened.st_size) != oid
     finally:
@@ -234,20 +237,6 @@ def unstaged_paths(root: Path) -> list[str]:
     )
     if algorithm not in ("sha1", "sha256"):
         raise ValueError("unsupported Git object format")
-    filemode = (
-        git(
-            root,
-            "config",
-            "--type=bool",
-            "--default=true",
-            "--get",
-            "core.fileMode",
-            work_tree=root,
-        )
-        .decode()
-        .strip()
-        == "true"
-    )
     changed = set()
     tree = Worktree(root)
     try:
@@ -266,13 +255,45 @@ def unstaged_paths(root: Path) -> list[str]:
                 int(mode, 8),
                 oid.decode(),
                 algorithm,
-                filemode,
                 sparse=tag == b"S",
             ):
                 changed.add(path.decode("utf-8", "surrogateescape"))
     finally:
         tree.close()
     return sorted(changed)
+
+
+def untracked_paths(root: Path) -> list[str]:
+    """Untracked paths, hidden only by ignore rules that are themselves visible.
+
+    `.gitignore` files live in the working tree, so editing one shows up as an
+    unstaged or untracked change. `.git/info/exclude` and `core.excludesFile` do
+    not, so they are never applied. Untracked `.gitignore` files are listed even
+    when they ignore themselves, so a new one cannot hide its directory silently.
+    """
+    return sorted(
+        set(
+            paths(
+                root,
+                "ls-files",
+                "--others",
+                "--exclude-per-directory=.gitignore",
+                "-z",
+                work_tree=root,
+            )
+        )
+        | set(
+            paths(
+                root,
+                "ls-files",
+                "--others",
+                "-z",
+                "--",
+                ":(glob)**/.gitignore",
+                work_tree=root,
+            )
+        )
+    )
 
 
 def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
@@ -305,6 +326,7 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
         "--cached",
         "--name-only",
         "--no-renames",
+        "--ignore-submodules=none",
         "-z",
         head,
         "--",
@@ -320,6 +342,7 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
             "diff",
             "--name-only",
             "--no-renames",
+            "--ignore-submodules=none",
             "-z",
             before,
             head,
@@ -331,14 +354,7 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
         "staged_delta": staged,
         "unstaged_delta": unstaged,
         "working_tree_delta": sorted(set(staged) | set(unstaged)),
-        "untracked_files": paths(
-            root,
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "-z",
-            work_tree=root,
-        ),
+        "untracked_files": untracked_paths(root),
     }
     if git(root, "rev-parse", "HEAD", work_tree=root).decode().strip() != head:
         raise ValueError("Git HEAD changed during capture; retry")

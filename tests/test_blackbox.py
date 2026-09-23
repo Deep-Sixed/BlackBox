@@ -726,6 +726,83 @@ def test_dangling_git_symlink_is_not_a_repository(repo, tmp_path):
         collect_git(root)
 
 
+def add_submodule(repo):
+    """Commit a gitlink at `sub`; return the baseline and a function that stages
+    the gitlink at a new submodule commit."""
+    root, git = repo
+    sub = root / "sub"
+    sub.mkdir()
+
+    def subgit(*args):
+        return subprocess.check_output(["git", "-C", str(sub), *args]).decode().strip()
+
+    def advance(content):
+        (sub / "a.txt").write_text(content)
+        commit_all(subgit, content)
+        git("add", "sub")
+
+    subgit("init", "-q")
+    (sub / "a.txt").write_text("a\n")
+    commit_all(subgit, "first")
+    first = subgit("rev-parse", "HEAD")
+    git("update-index", "--add", "--cacheinfo", f"160000,{first},sub")
+    commit_all(git, "add gitlink")
+    return git("rev-parse", "HEAD"), advance
+
+
+@pytest.mark.parametrize("setting", ["config", "gitmodules"])
+def test_submodule_ignore_settings_cannot_hide_gitlink_changes(repo, setting):
+    root, git = repo
+    baseline, advance = add_submodule(repo)
+    if setting == "config":
+        git("config", "diff.ignoreSubmodules", "all")
+    else:
+        git("config", "-f", ".gitmodules", "submodule.sub.path", "sub")
+        git("config", "-f", ".gitmodules", "submodule.sub.ignore", "all")
+    advance("second")
+    commit_all(git, "bump gitlink")
+    advance("third")
+    # plain Git is fooled
+    assert git("diff", "--cached", "--name-only", "HEAD") == ""
+    assert "sub" not in git("diff", "--name-only", baseline, "HEAD").split()
+    result = collect_git(root, baseline)
+    assert "sub" in result["committed_delta"]
+    assert result["staged_delta"] == ["sub"]
+
+
+def test_core_filemode_false_cannot_hide_executable_bit_changes(repo):
+    root, git = repo
+    git("config", "core.fileMode", "false")
+    (root / "tracked.txt").chmod(0o755)
+    assert git("diff", "--name-only") == ""  # plain Git is fooled
+    result = collect_git(root)
+    assert result["unstaged_delta"] == result["working_tree_delta"] == ["tracked.txt"]
+
+
+def test_untracked_files_cannot_hide_behind_invisible_ignore_rules(repo, tmp_path):
+    root, git = repo
+    (root / "info-excluded.txt").write_text("hidden\n")
+    (root / ".git" / "info" / "exclude").write_text("info-excluded.txt\n")
+    (root / "globally-excluded.txt").write_text("hidden\n")
+    global_excludes = tmp_path / "global-excludes"
+    global_excludes.write_text("globally-excluded.txt\n")
+    git("config", "core.excludesFile", str(global_excludes))
+    (root / "d").mkdir()
+    (root / "d" / "new.txt").write_text("hidden\n")
+    (root / "d" / ".gitignore").write_text("*\n")  # ignores itself too
+    (root / "build.log").write_text("ignored\n")
+    (root / ".gitignore").write_text("*.log\n")
+    commit_all(git, "track .gitignore")
+    (root / "build.log").write_text("ignored\n")  # commit_all -A skipped it
+    assert git("ls-files", "--others", "--exclude-standard") == ""  # Git hides all
+    result = collect_git(root)
+    assert result["untracked_files"] == [
+        "d/.gitignore",
+        "globally-excluded.txt",
+        "info-excluded.txt",
+    ]
+
+
 def test_local_observer_authority_cannot_be_claimed_by_input(
     database, capture_request, repo
 ):
