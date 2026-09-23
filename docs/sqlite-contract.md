@@ -66,7 +66,9 @@ subsequent capture.
 `blackbox check` checks SQLite integrity, foreign keys, v1 observation receipt
 coverage/digests, canonical record coverage/digests, orphan/duplicate identities,
 sequence continuity, chain continuity and relationship attribution/chronology. Results contain `ok`, `schema_version` and sorted,
-deduplicated error categories. Unreadable databases report `database_unavailable`;
+deduplicated error categories, plus (since package 0.5.0) the sequence of the
+first failing receipt. With `--anchor`, it also compares a previously exported
+chain head (`anchor_mismatch`, `anchor_missing`). Unreadable databases report `database_unavailable`;
 unrecognized/malformed schemas report `schema_integrity`, with null schema version.
 Results contain no evidence values, exception messages or paths. The CLI exits 1
 on failure. Schema v2 adds `schema_version` to the previous check result shape.
@@ -78,10 +80,13 @@ remote identity, or upgrade authority. A backfilled receipt records the canonica
 material present at migration time; v1 had no receipts authenticating claims or
 other non-observation records before that point.
 
-The chain has no signature or external trusted anchor. A party able to rewrite
-the database can rewrite records and recompute receipts, or delete a consistent
-suffix of records and receipts. Such a rewrite is outside the local integrity
-model. Immutable SQL triggers guard ordinary writes, not arbitrary file access.
+The chain has no signature and BlackBox holds no external trusted anchor. A
+party able to rewrite the database can rewrite records and recompute receipts, or
+delete a consistent suffix of records and receipts. Such a rewrite is outside the
+local integrity model unless the operator anchors: `get_chain_head` exports the
+chain head, and `check_integrity(anchor=...)` detects any rewrite or truncation
+up to an anchor kept where the writer cannot change it. Records appended after
+the latest anchor remain unprotected against a hostile owner. Immutable SQL triggers guard ordinary writes, not arbitrary file access.
 The checker detects inconsistencies against locally stored metadata; it cannot
 prove complete history against a hostile owner. Receipt checking/backfill currently
 requires memory proportional to the stored records and migration holds a writer
@@ -89,7 +94,7 @@ lock for the backfill. No external observer authentication is introduced.
 
 ## Python consumer boundary
 
-Package 0.4.1 uses schema v3 (introduced by 0.4.0). Public reader operations raise
+Package 0.5.0 uses schema v3 (introduced by 0.4.0). Public reader operations raise
 `MigrationRequiredError` for v1/v2; `initialize` and capture/claim/link writer operations
 may migrate. `check_integrity` returns typed findings when inspection succeeds
 and raises bounded errors when the database cannot be opened or validated.

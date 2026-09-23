@@ -27,10 +27,24 @@ from .errors import (
     SchemaError,
     ValidationError,
 )
-from .integrity import evidence_errors, record_errors, relationship_errors
-from .models import Capture, Claim, EvidenceLink, Identifier, safe_strings
+from .integrity import (
+    anchor_errors,
+    chain_head,
+    evidence_errors,
+    receipt_findings,
+    relationship_errors,
+)
+from .models import (
+    Capture,
+    ChainAnchor,
+    Claim,
+    EvidenceLink,
+    Identifier,
+    safe_strings,
+)
 from .results import (
     CaptureResult,
+    ChainHead,
     ClaimRelationView,
     ClaimResult,
     ClaimView,
@@ -47,6 +61,7 @@ __all__ = [
     "append_claim",
     "capture",
     "check_integrity",
+    "get_chain_head",
     "get_claim_relations",
     "get_claims",
     "get_evidence_links",
@@ -232,19 +247,43 @@ def get_claims(
 
 
 @_boundary
-def check_integrity(database: str | Path) -> IntegrityResult:
-    """Report inconsistencies; failures to open/validate raise bounded errors."""
-    connection = _db.connect(_path(database), readonly=True)
+def check_integrity(
+    database: str | Path, *, anchor: Mapping[str, object] | None = None
+) -> IntegrityResult:
+    """Report inconsistencies; failures to open/validate raise bounded errors.
+
+    An anchor is a chain head exported earlier by `get_chain_head` and kept
+    outside the database; it detects rewrites and truncation up to that point.
+    """
+    path = _path(database)
+    pinned = _input(ChainAnchor, anchor) if anchor is not None else None
+    connection = _db.connect(path, readonly=True)
     try:
         connection.execute("BEGIN")
-        errors = (
-            evidence_errors(connection)
-            | record_errors(connection)
-            | relationship_errors(connection)
-        )
+        chain, first_broken = receipt_findings(connection)
+        errors = evidence_errors(connection) | chain | relationship_errors(connection)
+        if pinned is not None:
+            errors |= anchor_errors(connection, pinned.sequence, pinned.digest)
         return IntegrityResult(
-            ok=not errors, schema_version=VERSION, errors=tuple(sorted(errors))
+            ok=not errors,
+            schema_version=VERSION,
+            errors=tuple(sorted(errors)),
+            first_broken_sequence=first_broken,
         )
+    finally:
+        connection.close()
+
+
+@_boundary
+def get_chain_head(database: str | Path) -> ChainHead:
+    """Export the receipt chain's current head for safekeeping outside BlackBox.
+
+    Reads only; it does not verify the chain. Pass the head back to
+    `check_integrity(anchor=...)` later to detect rewrites or truncation.
+    """
+    connection = _db.connect(_path(database), readonly=True)
+    try:
+        return _output(ChainHead, chain_head(connection))
     finally:
         connection.close()
 

@@ -117,7 +117,18 @@ def evidence_errors(connection):
 
 
 def record_errors(connection, *, version=3):
+    return receipt_findings(connection, version=version)[0]
+
+
+def receipt_findings(connection, *, version=3):
+    """Return chain error categories and the first receipt sequence that fails.
+
+    The sequence is the stored sequence of the first receipt, in chain order, that
+    fails continuity, linkage, identity or digest checks. Coverage findings have
+    no receipt position and do not set it.
+    """
     errors = set()
+    first_broken = None
     records = {
         (table, row["id"]): row
         for table in (V2_RECORD_FIELDS if version == 2 else RECORD_FIELDS)
@@ -129,15 +140,16 @@ def record_errors(connection, *, version=3):
         connection.execute("SELECT * FROM record_receipts ORDER BY sequence"), 1
     ):
         key = (receipt["record_type"], receipt["record_id"])
+        found = set()
         if receipt["sequence"] != sequence:
-            errors.add("sequence_continuity")
+            found.add("sequence_continuity")
         if receipt["previous_digest"] != previous:
-            errors.add("chain_integrity")
+            found.add("chain_integrity")
         if key in seen:
-            errors.add("duplicate_receipt")
+            found.add("duplicate_receipt")
         seen.add(key)
         if key not in records:
-            errors.add("orphan_receipt")
+            found.add("orphan_receipt")
         else:
             try:
                 expected = digest(
@@ -147,13 +159,42 @@ def record_errors(connection, *, version=3):
                     receipt["previous_digest"],
                 )
                 if receipt["digest"] != expected:
-                    errors.add("record_integrity")
+                    found.add("record_integrity")
             except ValueError, TypeError:
-                errors.add("record_integrity")
+                found.add("record_integrity")
+        if found and first_broken is None:
+            first_broken = receipt["sequence"]
+        errors |= found
         previous = receipt["digest"]
     if records.keys() - seen:
         errors.add("record_coverage")
-    return errors
+    return errors, first_broken
+
+
+def chain_head(connection):
+    """The last receipt's position and digest; an empty chain is at genesis."""
+    tail = connection.execute(
+        "SELECT sequence,digest FROM record_receipts ORDER BY sequence DESC LIMIT 1"
+    ).fetchone()
+    if tail is None:
+        return {"sequence": 0, "digest": GENESIS}
+    return {"sequence": tail[0], "digest": tail[1]}
+
+
+def anchor_errors(connection, sequence, expected):
+    """Compare a previously exported chain head with the stored chain.
+
+    Receipts link each digest to all earlier ones, so a matching digest at the
+    anchored sequence pins every receipt up to it (given an intact chain).
+    """
+    if sequence == 0:
+        return set() if expected == GENESIS else {"anchor_mismatch"}
+    row = connection.execute(
+        "SELECT digest FROM record_receipts WHERE sequence=?", (sequence,)
+    ).fetchone()
+    if row is None:
+        return {"anchor_missing"}
+    return set() if row[0] == expected else {"anchor_mismatch"}
 
 
 def relationship_errors(connection):

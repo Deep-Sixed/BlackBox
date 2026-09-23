@@ -84,6 +84,13 @@ class Capture(StrictModel):
     )
 
 
+class ChainAnchor(StrictModel):
+    """A chain head exported earlier and held outside this database."""
+
+    sequence: Annotated[int, Field(ge=0, le=2**63 - 1)]
+    digest: Digest
+
+
 class EvidenceLink(StrictModel):
     source: Identifier
     claim_id: Identifier

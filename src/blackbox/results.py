@@ -131,6 +131,12 @@ class IntegrityResult(_Result):
     ok: bool
     schema_version: int | None
     errors: tuple[str, ...]
+    first_broken_sequence: int | None = None
+
+
+class ChainHead(_Result):
+    sequence: int
+    digest: str
 
 
 class EvidenceLinkResult(_Result):

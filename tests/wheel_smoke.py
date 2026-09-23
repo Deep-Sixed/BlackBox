@@ -85,10 +85,19 @@ def main(wheel):
         )["claim_id"]
         statuses = {row["id"]: row["status"] for row in run("claims")}
         assert statuses == {original["id"]: "retracted", retracted: "active"}
-        assert run("check") == {"ok": True, "schema_version": 3, "errors": []}
+        intact = {
+            "ok": True,
+            "schema_version": 3,
+            "errors": [],
+            "first_broken_sequence": None,
+        }
+        assert run("check") == intact
+        anchor = root / "anchor.json"
+        anchor.write_text(json.dumps(run("head")))
+        assert run("check", "--anchor", str(anchor)) == intact
     print(
         "Installed wheel CLI: help, init, capture, cross-session retraction, "
-        "claims, check passed"
+        "claims, check, head, anchored check passed"
     )
 
 

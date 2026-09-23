@@ -7,6 +7,7 @@ from pathlib import Path
 from .api import (
     append_claim,
     check_integrity,
+    get_chain_head,
     get_claims,
     get_session,
     get_timeline,
@@ -15,7 +16,7 @@ from .api import (
 from .api import (
     capture as capture_session,
 )
-from .errors import BlackBoxError, IntegrityError, SchemaError
+from .errors import BlackBoxError, IntegrityError, SchemaError, ValidationError
 
 
 def main() -> int:
@@ -34,7 +35,9 @@ def main() -> int:
         command.add_argument("--through", type=int)
         if name == "claims":
             command.add_argument("--topic")
-    commands.add_parser("check")
+    check = commands.add_parser("check")
+    check.add_argument("--anchor", type=Path)
+    commands.add_parser("head")
     claim = commands.add_parser("claim")
     claim.add_argument("session")
     claim.add_argument("--input", type=Path, required=True)
@@ -79,14 +82,23 @@ def main() -> int:
                         relation=args.relation,
                     ).claim_id
                 }
+            case "head":
+                result = get_chain_head(args.database).model_dump(mode="json")
             case "check":
-                result = check_integrity(args.database).model_dump(mode="json")
+                anchor = (
+                    json.loads(args.anchor.read_text())
+                    if args.anchor is not None
+                    else None
+                )
+                result = check_integrity(args.database, anchor=anchor).model_dump(
+                    mode="json"
+                )
                 print(json.dumps(result, sort_keys=True))
                 return 0 if result["ok"] else 1
         print(json.dumps(result, sort_keys=True))
         return 0
     except BlackBoxError as error:
-        if args.command == "check":
+        if args.command == "check" and not isinstance(error, ValidationError):
             category = (
                 "schema_integrity"
                 if isinstance(error, SchemaError)
@@ -94,7 +106,12 @@ def main() -> int:
                 if isinstance(error, IntegrityError)
                 else "database_unavailable"
             )
-            result = {"ok": False, "schema_version": None, "errors": [category]}
+            result = {
+                "ok": False,
+                "schema_version": None,
+                "errors": [category],
+                "first_broken_sequence": None,
+            }
         else:
             result = {"error": error.code, "retryable": error.retryable}
         print(json.dumps(result, sort_keys=True))
