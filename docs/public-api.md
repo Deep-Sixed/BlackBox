@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.6.0
+# Supported public API — BlackBox 0.6.1
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -18,6 +18,8 @@ Package 0.6.0 adds the `blackbox hook` CLI command for host lifecycle hooks and
 schema v4, whose only change is the `host_reported` source authority for the
 events it records; see [hooks](hooks.md). The Python operations are unchanged;
 `SourceRecord.authority` gains the `host_reported` value.
+Package 0.6.1 keeps schema v4 and fixes the Git observer's working-tree reads
+(below) and the CLI's handling of deeply nested input files.
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -103,7 +105,11 @@ The public Pydantic result models are frozen and their collections are tuples:
   unmerged paths. It never runs repository filters. So since 0.5.0, a file whose
   only difference is a legitimate clean filter (for example LFS or line-ending
   conversion) counts as changed, `assume-unchanged` flags are ignored, and a
-  submodule counts only when a different commit is checked out.
+  submodule counts only when a different commit is checked out. Since 0.6.1,
+  like Git, a path under a symlinked or non-directory parent counts as deleted
+  (the symlink is never followed), a sparse-checkout (skip-worktree) path counts
+  only if it is present and differs, and a submodule without a checked-out
+  commit counts as changed rather than failing the capture.
 - Derived views: `SessionView` combines canonical projections and lifecycle status;
   `ClaimView` adds `active`, `superseded`, `contested` or `retracted` status to a claim.
   `EvidenceLinkView` and `ClaimRelationView` expose attributed relations and local order.

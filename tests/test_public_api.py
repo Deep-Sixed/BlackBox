@@ -41,7 +41,7 @@ def test_supported_exports_are_deliberate():
         "BaseModel",
     ):
         assert name not in bb.__all__
-    assert bb.__version__ == "0.6.0"
+    assert bb.__version__ == "0.6.1"
 
 
 def test_typed_detached_results(database, request_data):
@@ -265,6 +265,34 @@ def test_integrity_findings_are_typed_results(database, request_data):
     result = bb.check_integrity(database)
     assert isinstance(result, bb.IntegrityResult)
     assert not result.ok and "record_integrity" in result.errors
+
+
+@pytest.mark.parametrize(
+    "command", [("capture", "--input"), ("claim", "session", "--input")]
+)
+def test_cli_bounds_deeply_nested_input(database, tmp_path, command):
+    source = tmp_path / "deep.json"
+    source.write_text("[" * 100_000 + "]" * 100_000)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "blackbox.cli",
+            "--database",
+            str(database),
+            *command,
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert json.loads(result.stdout) == {
+        "error": "input_unavailable_or_invalid",
+        "retryable": False,
+    }
+    assert "Traceback" not in result.stderr
 
 
 def test_cli_uses_public_error_contract(database, request_data, tmp_path):

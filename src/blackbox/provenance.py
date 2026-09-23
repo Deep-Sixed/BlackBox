@@ -6,6 +6,7 @@ on the observer's behalf, so no repository-configured filter can run.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import re
@@ -65,44 +66,128 @@ def blob_id(algorithm: str, chunks, size: int) -> str | None:
     return digest.hexdigest() if seen == size else None
 
 
-def read_chunks(path: bytes):
-    with open(path, "rb") as handle:
-        while chunk := handle.read(1 << 20):
-            yield chunk
+# Opening working-tree paths must never follow a symlink or block: the observed
+# actor controls the tree and could otherwise point the observer outside the
+# repository or at a FIFO.
+OPEN_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+OPEN_FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+ABSENT = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+
+
+class Worktree:
+    """Working-tree access relative to the root, one directory handle at a time.
+
+    Like Git, a leading path component that is a symlink or not a directory
+    means the entry is absent: it is never followed.
+    """
+
+    def __init__(self, root: Path):
+        self.handles = {b"": os.open(root, OPEN_DIRECTORY)}
+
+    def directory(self, parent: bytes) -> int | None:
+        # `ls-files` lists paths sorted, so only the current path's ancestors are
+        # needed again; keeping every directory open would exhaust descriptors
+        # on repositories with many directories.
+        stale = [
+            key
+            for key in self.handles
+            if key and parent != key and not parent.startswith(key + b"/")
+        ]
+        for key in stale:
+            handle = self.handles.pop(key)
+            if handle is not None:
+                os.close(handle)
+        return self.open(parent)
+
+    def open(self, parent: bytes) -> int | None:
+        if parent not in self.handles:
+            head, _, name = parent.rpartition(b"/")
+            base = self.open(head)
+            handle = None
+            if base is not None:
+                try:
+                    handle = os.open(name, OPEN_DIRECTORY, dir_fd=base)
+                except OSError as error:
+                    if error.errno not in ABSENT:
+                        raise
+            self.handles[parent] = handle
+        return self.handles[parent]
+
+    def close(self):
+        for handle in self.handles.values():
+            if handle is not None:
+                os.close(handle)
+
+
+def read_chunks(handle: int):
+    while chunk := os.read(handle, 1 << 20):
+        yield chunk
 
 
 def entry_changed(
-    root: Path, path: bytes, mode: int, oid: str, algorithm: str, filemode: bool
+    tree: Worktree,
+    root: Path,
+    path: bytes,
+    mode: int,
+    oid: str,
+    algorithm: str,
+    filemode: bool,
+    sparse: bool,
 ) -> bool:
     """Compare one stage-0 index entry with the working tree, without Git filters.
 
     This is raw-byte equality: content that differs only through a legitimate
     clean filter (for example LFS or line-ending conversion) counts as changed,
-    and assume-unchanged flags are ignored rather than trusted.
+    and assume-unchanged flags are ignored rather than trusted. A skip-worktree
+    (sparse) entry that is absent is expected; one that is present is compared,
+    so the flag cannot hide an edit.
     """
-    location = os.fsencode(root) + b"/" + path
+    parent, _, name = path.rpartition(b"/")
+    base = tree.directory(parent)
+    if base is None:
+        return not sparse
     try:
-        info = os.lstat(location)
-    except FileNotFoundError, NotADirectoryError:
-        return True
+        info = os.stat(name, dir_fd=base, follow_symlinks=False)
+    except OSError as error:
+        if error.errno in ABSENT:
+            return not sparse
+        raise
     kind = mode & 0o170000
     if kind == 0o160000:
         # A submodule counts as changed only when a different commit is checked
         # out; its own working tree is not inspected.
+        location = os.fsencode(root) + b"/" + path
         if not stat.S_ISDIR(info.st_mode) or not os.path.lexists(location + b"/.git"):
             return False
-        checked_out = git(Path(os.fsdecode(location)), "rev-parse", "--verify", "HEAD")
+        try:
+            checked_out = git(
+                Path(os.fsdecode(location)), "rev-parse", "--verify", "HEAD"
+            )
+        except ValueError:
+            return True  # for example an empty repository with no commit
         return checked_out.decode().strip() != oid
     if kind == 0o120000:
         if not stat.S_ISLNK(info.st_mode):
             return True
-        target = os.readlink(location)
+        target = os.readlink(name, dir_fd=base)
         return blob_id(algorithm, [target], len(target)) != oid
     if not stat.S_ISREG(info.st_mode):
         return True
-    if filemode and bool(info.st_mode & 0o100) != bool(mode & 0o100):
-        return True
-    return blob_id(algorithm, read_chunks(location), info.st_size) != oid
+    try:
+        handle = os.open(name, OPEN_FILE, dir_fd=base)
+    except OSError as error:
+        if error.errno in ABSENT:
+            return True  # replaced since the stat
+        raise
+    try:
+        opened = os.fstat(handle)
+        if not stat.S_ISREG(opened.st_mode):
+            return True
+        if filemode and bool(opened.st_mode & 0o100) != bool(mode & 0o100):
+            return True
+        return blob_id(algorithm, read_chunks(handle), opened.st_size) != oid
+    finally:
+        os.close(handle)
 
 
 def unstaged_paths(root: Path) -> list[str]:
@@ -121,15 +206,27 @@ def unstaged_paths(root: Path) -> list[str]:
         == "true"
     )
     changed = set()
-    for record in git(root, "ls-files", "--stage", "-z").split(b"\0"):
-        if not record:
-            continue
-        meta, path = record.split(b"\t", 1)
-        mode, oid, stage = meta.split(b" ")
-        if stage != b"0" or entry_changed(
-            root, path, int(mode, 8), oid.decode(), algorithm, filemode
-        ):
-            changed.add(path.decode("utf-8", "surrogateescape"))
+    tree = Worktree(root)
+    try:
+        # -t prefixes each entry with a status tag; "S" marks skip-worktree.
+        for record in git(root, "ls-files", "--stage", "-t", "-z").split(b"\0"):
+            if not record:
+                continue
+            meta, path = record.split(b"\t", 1)
+            tag, mode, oid, stage = meta.split(b" ")
+            if stage != b"0" or entry_changed(
+                tree,
+                root,
+                path,
+                int(mode, 8),
+                oid.decode(),
+                algorithm,
+                filemode,
+                sparse=tag == b"S",
+            ):
+                changed.add(path.decode("utf-8", "surrogateescape"))
+    finally:
+        tree.close()
     return sorted(changed)
 
 
