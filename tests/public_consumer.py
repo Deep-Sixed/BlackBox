@@ -8,10 +8,10 @@ import blackbox as bb
 
 
 def exercise(database):
-    assert version("blackbox") == bb.__version__ == "0.3.0"
+    assert version("blackbox") == bb.__version__ == "0.4.0"
     initialized = bb.initialize(database)
     assert isinstance(initialized, bb.InitializationResult)
-    assert initialized.schema_version == 2
+    assert initialized.schema_version == 3
     request = {
         "request_id": "external-consumer",
         "producer": "consumer",
@@ -46,11 +46,47 @@ def exercise(database):
         event.sequence for event in events
     )
     assert bb.get_timeline(database, through=events[0].sequence) == events[:1]
+    review = bb.capture(
+        database, {"request_id": "review", "producer": "consumer"}
+    ).session_id
+    retract = bb.append_claim(
+        database,
+        review,
+        {"source": "reviewer", "topic": "contract", "statement": "Withdraw correction"},
+        target=added.claim_id,
+        relation="retracts",
+    )
+    (relation,) = bb.get_claim_relations(database, claim_id=retract.claim_id)
+    assert isinstance(relation, bb.ClaimRelationView)
+    assert (
+        relation.origin_session_id == review
+        and relation.target_session_id == result.session_id
+    )
+    link = bb.link_evidence(
+        database,
+        review,
+        {
+            "source": "reviewer",
+            "claim_id": retract.claim_id,
+            "record_type": "evidence",
+            "evidence_record_id": snapshot.evidence[0].id,
+            "relation": "context",
+        },
+    )
+    assert isinstance(link, bb.EvidenceLinkResult)
+    (linked,) = bb.get_evidence_links(database, session=review)
+    assert isinstance(linked, bb.EvidenceLinkView) and linked.id == link.link_id
+    assert bb.get_evidence_links(database, through=linked.sequence - 1) == ()
+    assert (
+        next(c for c in bb.get_claims(database) if c.id == added.claim_id).status
+        == "retracted"
+    )
+    assert bb.get_session(database, result.session_id).session == snapshot.session
     checked = bb.check_integrity(database)
     assert isinstance(checked, bb.IntegrityResult) and checked.ok
     assert checked.model_dump(mode="json") == {
         "ok": True,
-        "schema_version": 2,
+        "schema_version": 3,
         "errors": [],
     }
     try:
@@ -60,7 +96,7 @@ def exercise(database):
     else:
         raise AssertionError("conflicting identity accepted")
     print(
-        "Installed public API: initialize, capture, claims, reconstruction, timeline, integrity passed"
+        "Installed public API: initialize, capture, claims, reconstruction, timeline, attributed evidence links, cross-session retraction, integrity passed"
     )
 
 

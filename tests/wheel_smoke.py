@@ -55,7 +55,7 @@ def main(wheel):
         )
         assert json.loads(result.stdout) == {
             "ok": True,
-            "schema_version": 2,
+            "schema_version": 3,
             "errors": [],
         }
     print("Installed wheel: help, init, check passed")

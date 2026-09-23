@@ -7,7 +7,7 @@ from pathlib import Path
 from ._signals import EvidenceIssue, MissingRecord
 from .db import connect
 from .ingest import state
-from .integrity import evidence_errors, record_errors
+from .integrity import evidence_errors, record_errors, relationship_errors
 from .schema import VERSION
 
 
@@ -37,6 +37,13 @@ def reconstruct(database: str | Path, session: str) -> dict:
                     (session,),
                 )
             ]
+        for claim in result["claims"]:
+            relation = connection.execute(
+                "SELECT target_id,relation FROM claim_relations WHERE claim_id=?",
+                (claim["id"],),
+            ).fetchone()
+            if relation:
+                claim.update(dict(relation))
         result["evidence"] = [
             dict(row)
             for row in connection.execute(
@@ -77,7 +84,9 @@ def claims(
         rows = [
             dict(row)
             for row in connection.execute(
-                "SELECT c.* FROM claims c JOIN events e ON e.entity_id=c.id AND e.kind='CLAIM' "
+                "SELECT c.id,c.session_id,c.source_id,c.topic,c.statement,r.target_id,r.relation "
+                "FROM claims c LEFT JOIN claim_relations r ON r.claim_id=c.id "
+                "JOIN events e ON e.entity_id=c.id AND e.kind='CLAIM' "
                 "WHERE (? IS NULL OR e.sequence<=?) ORDER BY e.sequence",
                 (through, through),
             )
@@ -86,9 +95,12 @@ def claims(
             row["target_id"] for row in rows if row["relation"] == "supersedes"
         }
         contested = {row["target_id"] for row in rows if row["relation"] == "contests"}
+        retracted = {row["target_id"] for row in rows if row["relation"] == "retracts"}
         for row in rows:
             row["status"] = (
-                "superseded"
+                "retracted"
+                if row["id"] in retracted
+                else "superseded"
                 if row["id"] in superseded
                 else "contested"
                 if row["id"] in contested
@@ -108,9 +120,64 @@ def integrity(database: str | Path) -> dict:
         return {"ok": False, "schema_version": None, "errors": ["database_unavailable"]}
     try:
         connection.execute("BEGIN")
-        errors = evidence_errors(connection) | record_errors(connection)
+        errors = (
+            evidence_errors(connection)
+            | record_errors(connection)
+            | relationship_errors(connection)
+        )
         return {"ok": not errors, "schema_version": VERSION, "errors": sorted(errors)}
     except sqlite3.Error:
         return {"ok": False, "schema_version": VERSION, "errors": ["sqlite_integrity"]}
+    finally:
+        connection.close()
+
+
+def evidence_links(database, *, claim_id=None, session=None, through=None):
+    connection = connect(database, readonly=True)
+    try:
+        return [
+            dict(row)
+            for row in connection.execute(
+                "SELECT l.id,l.claim_id,coalesce(l.observation_id,l.evidence_id,l.artifact_id) "
+                "AS evidence_record_id, CASE WHEN l.observation_id IS NOT NULL THEN 'observation' "
+                "WHEN l.evidence_id IS NOT NULL THEN 'evidence' ELSE 'artifact' END AS record_type, "
+                "l.relation,l.source_id,l.session_id AS origin_session_id,l.recorded_at,e.sequence "
+                "FROM evidence_links l JOIN events e ON e.entity_id=l.id AND e.kind='EVIDENCE_LINK' "
+                "WHERE (? IS NULL OR l.claim_id=?) AND (? IS NULL OR l.session_id=?) "
+                "AND (? IS NULL OR e.sequence<=?) ORDER BY e.sequence",
+                (claim_id, claim_id, session, session, through, through),
+            )
+        ]
+    finally:
+        connection.close()
+
+
+def claim_relations(
+    database, *, claim_id=None, target_id=None, session=None, through=None
+):
+    connection = connect(database, readonly=True)
+    try:
+        return [
+            dict(row)
+            for row in connection.execute(
+                "SELECT r.id,r.claim_id,r.target_id,r.relation,c.source_id,"
+                "c.session_id AS origin_session_id,t.session_id AS target_session_id,"
+                "e.recorded_at,e.sequence FROM claim_relations r "
+                "JOIN claims c ON c.id=r.claim_id JOIN claims t ON t.id=r.target_id "
+                "JOIN events e ON e.id=r.event_id "
+                "WHERE (? IS NULL OR r.claim_id=?) AND (? IS NULL OR r.target_id=?) "
+                "AND (? IS NULL OR c.session_id=?) AND (? IS NULL OR e.sequence<=?) ORDER BY e.sequence",
+                (
+                    claim_id,
+                    claim_id,
+                    target_id,
+                    target_id,
+                    session,
+                    session,
+                    through,
+                    through,
+                ),
+            )
+        ]
     finally:
         connection.close()

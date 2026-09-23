@@ -28,13 +28,13 @@ DDL = [*v001.DDL, *ADDITIONS]
 
 
 def upgrade(connection):
-    from ..integrity import RECORD_FIELDS, append_receipt
+    from ..integrity import V2_RECORD_FIELDS, append_receipt
 
     for statement in ADDITIONS:
         connection.execute(statement)
     # Historical ordering is deliberately separate from event chronology.
     # This stable table order + primary key order never rewrites canonical rows.
-    for table in RECORD_FIELDS:
+    for table in V2_RECORD_FIELDS:
         order = "sequence" if table == "events" else "id"
         for row in connection.execute(f"SELECT id FROM {table} ORDER BY {order}"):
             append_receipt(connection, table, row[0])

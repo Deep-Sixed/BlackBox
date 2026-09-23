@@ -12,21 +12,20 @@ import pytest
 RELEASE = "9779108188cadff87d2ff9ee321b491d8ec16b68"
 
 
-@pytest.fixture(scope="session")
-def released_v1(tmp_path_factory):
-    root = tmp_path_factory.mktemp("released-v1")
+def release_fixture(tmp_path_factory, tag, release):
+    root = tmp_path_factory.mktemp(tag)
     source = root / "source"
     source.mkdir()
     archive = root / "release.tar"
     repo = Path(__file__).resolve().parents[1]
     assert (
         subprocess.check_output(
-            ["git", "rev-parse", "v0.1.0^{}"], cwd=repo, text=True
+            ["git", "rev-parse", tag + "^{}"], cwd=repo, text=True
         ).strip()
-        == RELEASE
+        == release
     )
     with archive.open("wb") as output:
-        subprocess.run(["git", "archive", RELEASE], cwd=repo, stdout=output, check=True)
+        subprocess.run(["git", "archive", release], cwd=repo, stdout=output, check=True)
     with tarfile.open(archive) as bundle:
         bundle.extractall(source, filter="data")
     env = {
@@ -98,4 +97,23 @@ print(json.dumps({"ddl": DDL, "digest":schema_digest(),
 def v1_database(released_v1, tmp_path):
     path = tmp_path / "v1.sqlite3"
     shutil.copy2(released_v1[0], path)
+    return path
+
+
+@pytest.fixture(scope="session")
+def released_v1(tmp_path_factory):
+    return release_fixture(tmp_path_factory, "v0.1.0", RELEASE)
+
+
+@pytest.fixture(scope="session")
+def released_v2(tmp_path_factory):
+    return release_fixture(
+        tmp_path_factory, "v0.3.0", "b2377d1214da2ac4c1df387b4ae2c7cd3e3aeebd"
+    )
+
+
+@pytest.fixture
+def v2_database(released_v2, tmp_path):
+    path = tmp_path / "v2.sqlite3"
+    shutil.copy2(released_v2[0], path)
     return path

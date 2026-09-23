@@ -19,14 +19,14 @@ unverified, regardless of their supplied digest. Local Git metadata is marked
 locally observed, not authenticated remote identity. Local process/OS ownership is
 the trust boundary; arbitrary code with database-file access is outside this model.
 
-Corrections and contests insert linked claims. The original claim is immutable.
+Corrections, contests and retractions insert linked claims across sessions. The original claim is immutable.
 Only one superseding successor is permitted. A chronological event sequence and
 UTC recording times support reconstruction. Derived summaries are read-only views,
 never source records.
 
-The Python library and CLI are the initial API. HTTP, MCP deployment, production
-data conversion, retention/deletion, external authentication, and EVECOR cutover
-are separate work. No legacy client compatibility is promised.
+The Python library and CLI are the supported interfaces. Network transports,
+production deployment integration, retention/deletion, external authentication,
+and remote observer infrastructure are separate system concerns.
 
 Schema v2 adds atomic forward migration from released v1 databases and chained
 receipts for all canonical record types. Read-only handles never migrate. See the
@@ -36,3 +36,11 @@ The [public API](public-api.md) is the consumer boundary. It accepts validated
 input mappings and returns detached, frozen typed views. Storage handles,
 transaction helpers and migration functions stay internal. The CLI uses this
 same boundary; expected implementation failures become bounded BlackBox errors.
+
+
+Schema v3 adds two bounded relationship tables: attributed evidence-to-claim
+assertions and immutable newer-to-older claim relations. Actor assertion,
+observer observation and BlackBox persistence remain distinct. No new observer
+runtime or Actor/Observer/Evaluation/Trace entities are introduced. See
+[trace relationships](trace-relationships.md) for attribution, local clock/order,
+status precedence and the tool/process boundary for the first future observer.

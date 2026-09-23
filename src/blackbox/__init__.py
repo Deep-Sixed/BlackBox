@@ -4,10 +4,13 @@ from .api import (
     append_claim,
     capture,
     check_integrity,
+    get_claim_relations,
     get_claims,
+    get_evidence_links,
     get_session,
     get_timeline,
     initialize,
+    link_evidence,
 )
 from .errors import (
     BlackBoxError,
@@ -26,8 +29,11 @@ from .results import (
     CallerObservation,
     CaptureResult,
     ClaimRecord,
+    ClaimRelationView,
     ClaimResult,
     ClaimView,
+    EvidenceLinkResult,
+    EvidenceLinkView,
     EvidenceRecord,
     FailureRecord,
     GitObservation,
@@ -40,7 +46,7 @@ from .results import (
     TimelineEvent,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "ArtifactRecord",
     "BlackBoxError",
@@ -48,10 +54,13 @@ __all__ = [
     "CallerObservation",
     "CaptureResult",
     "ClaimRecord",
+    "ClaimRelationView",
     "ClaimResult",
     "ClaimView",
     "ConflictError",
     "DatabaseError",
+    "EvidenceLinkResult",
+    "EvidenceLinkView",
     "EvidenceRecord",
     "FailureRecord",
     "GitObservation",
@@ -72,8 +81,11 @@ __all__ = [
     "append_claim",
     "capture",
     "check_integrity",
+    "get_claim_relations",
     "get_claims",
+    "get_evidence_links",
     "get_session",
     "get_timeline",
     "initialize",
+    "link_evidence",
 ]

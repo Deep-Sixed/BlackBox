@@ -6,11 +6,11 @@ from contextlib import closing
 
 from .._signals import EvidenceIssue, SchemaIssue
 from ..models import canonical
-from . import v001, v002
+from . import v001, v002, v003
 
-DEFINITIONS = {1: v001.DDL, 2: v002.DDL}
-UPGRADES = {1: v002.upgrade}
-CURRENT = 2
+DEFINITIONS = {1: v001.DDL, 2: v002.DDL, 3: v003.DDL}
+UPGRADES = {1: v002.upgrade, 2: v003.upgrade}
+CURRENT = 3
 
 
 def schema_digest(version=CURRENT):
@@ -96,9 +96,11 @@ def install(connection, timestamp):
             raise SchemaIssue("unsupported database identity or schema version")
         validate(connection, version)
         if version < CURRENT:
-            from ..integrity import evidence_errors
+            from ..integrity import evidence_errors, record_errors
 
-            if evidence_errors(connection):
+            if evidence_errors(connection) or (
+                version >= 2 and record_errors(connection, version=version)
+            ):
                 raise EvidenceIssue("invalid source evidence")
         while version < CURRENT:
             UPGRADES[version](connection)
