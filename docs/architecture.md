@@ -32,6 +32,11 @@ Only one superseding successor is permitted. A chronological event sequence and
 UTC recording times support reconstruction. Derived summaries are read-only views,
 never source records.
 
+Host lifecycle hooks (`blackbox hook`) let an agent's host runtime report each
+prompt, tool call and turn end without the agent's involvement. The host's
+report stays a caller assertion: BlackBox stores a payload digest, not the
+payload, and never blocks the observed action. See [hooks](hooks.md).
+
 The Python library and CLI are the supported interfaces. Network transports,
 production deployment integration, retention/deletion, external authentication,
 and remote observer infrastructure are separate system concerns.

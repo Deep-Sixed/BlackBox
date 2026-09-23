@@ -8,7 +8,7 @@ import blackbox as bb
 
 
 def exercise(database):
-    assert version("blackbox") == bb.__version__ == "0.5.1"
+    assert version("blackbox") == bb.__version__ == "0.6.0"
     initialized = bb.initialize(database)
     assert isinstance(initialized, bb.InitializationResult)
     assert initialized.schema_version == 3

@@ -85,6 +85,24 @@ def main(wheel):
         )["claim_id"]
         statuses = {row["id"]: row["status"] for row in run("claims")}
         assert statuses == {original["id"]: "retracted", retracted: "active"}
+        event = {"session_id": "smoke", "hook_event_name": "PostToolUse"}
+        event |= {"tool_name": "Bash", "tool_use_id": "toolu_smoke"}
+        hooked = subprocess.run(
+            [*command, "hook"],
+            cwd=root,
+            input=json.dumps(event),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert hooked.stdout == ""
+        (committed,) = [
+            item
+            for item in run("timeline")
+            if item["kind"] == "COMMITTED" and item["session_id"] not in sessions
+        ]
+        (observation,) = run("show", committed["session_id"])["observations"]
+        assert observation["data"]["name"] == "PostToolUse:Bash"
         intact = {
             "ok": True,
             "schema_version": 3,
@@ -97,7 +115,7 @@ def main(wheel):
         assert run("check", "--anchor", str(anchor)) == intact
     print(
         "Installed wheel CLI: help, init, capture, cross-session retraction, "
-        "claims, check, head, anchored check passed"
+        "claims, hook, check, head, anchored check passed"
     )
 
 

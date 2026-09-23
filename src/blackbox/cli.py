@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from .api import (
@@ -17,6 +18,7 @@ from .api import (
     capture as capture_session,
 )
 from .errors import BlackBoxError, IntegrityError, SchemaError, ValidationError
+from .hooks import hook_requests
 
 
 def main() -> int:
@@ -43,7 +45,18 @@ def main() -> int:
     claim.add_argument("--input", type=Path, required=True)
     claim.add_argument("--target")
     claim.add_argument("--relation", choices=("supersedes", "contests", "retracts"))
-    args = parser.parse_args()
+    hook = commands.add_parser("hook")
+    hook.add_argument("--producer", default="claude-code")
+    hook.add_argument("--git", action="store_true")
+    try:
+        args = parser.parse_args()
+    except SystemExit as error:
+        # Exit 2 blocks the observed action in hook hosts such as Claude Code.
+        if error.code == 2 and "hook" in sys.argv[1:]:
+            raise SystemExit(1) from None
+        raise
+    if args.command == "hook":
+        return run_hook(args)
     try:
         match args.command:
             case "init":
@@ -119,6 +132,35 @@ def main() -> int:
     except json.JSONDecodeError, UnicodeError, OSError:
         print('{"error":"input_unavailable_or_invalid","retryable":false}')
         return 1
+
+
+def run_hook(args) -> int:
+    """Record one host hook event. Stdout stays empty: hosts may feed it to the agent.
+
+    Never exits 2, which hook hosts treat as "block this action". Failures exit 1,
+    a non-blocking error, with a bounded code on stderr.
+    """
+    try:
+        try:
+            event, git, repo = hook_requests(
+                sys.stdin.buffer.read(), producer=args.producer, git=args.git
+            )
+        except ValueError, TypeError, RecursionError:
+            raise ValidationError() from None
+        capture_session(args.database, event)
+        if git is not None:
+            capture_session(args.database, git, repo=repo)
+    except BlackBoxError as error:
+        result = {"error": error.code, "retryable": error.retryable}
+        print(json.dumps(result, sort_keys=True), file=sys.stderr)
+        return 1
+    except OSError:
+        print(
+            '{"error":"input_unavailable_or_invalid","retryable":false}',
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

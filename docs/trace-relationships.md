@@ -78,8 +78,11 @@ Claim evidence links and cross-session corrections use the bounded forms above.
 Effective validity windows, generic notes and mutable statuses are outside core.
 BM25, semantic ranking and interpretation belong to downstream consumers.
 
-BlackBox already independently observes local Git metadata. Tool/process execution
-is the next planned observer boundary: the first execution observer. Additional
+BlackBox already independently observes local Git metadata. Since package 0.6.0,
+`blackbox hook` records tool calls as reported by the agent's host runtime
+through its lifecycle hooks; these remain `caller_asserted` (see [hooks](hooks.md)).
+Independently witnessed tool/process execution is the next planned observer
+boundary: the first execution observer. Additional
 filesystem, CI, model-traffic and evaluation-specific observers are future work.
 The current core has no execution-observer runtime or gateway and makes no policy
 decisions.

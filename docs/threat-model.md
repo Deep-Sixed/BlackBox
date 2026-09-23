@@ -32,6 +32,8 @@ beyond making tampering *detectable*, and then only in the ways listed below.
 | A caller claiming observer authority, for example by naming its source `blackbox.git` | Authority comes from the code path, not the name: caller input is always `caller_asserted`/`unverified` | cannot be expressed |
 | An observed repository running a `core.fsmonitor` hook, or redirecting the observer through inherited `GIT_*` variables | Git runs with `-c core.fsmonitor=false` and a scrubbed environment | not executed |
 | An observed repository running a clean filter, or hiding edits through a filter or an `assume-unchanged` flag | Git never reads the working tree for the observer: unstaged changes compare raw working-tree bytes with index blob IDs, ignoring `assume-unchanged` | not executed; edit reported |
+| An agent skipping or suppressing its own reports | With [host hooks](hooks.md), the host runtime reports each prompt, tool call and turn end; the agent is not involved | host-reported records, still `caller_asserted` |
+| The recorder blocking or steering the observed agent | `blackbox hook` never exits 2 (the hook "block" code) and never writes to stdout, which some hooks feed back to the agent | cannot block |
 | Other local users reading or replacing the database file | Created `0600`; writers refuse wider permissions and symlinks | `DatabaseError` |
 | Secrets entering the store or leaking through errors | Inputs and observed Git metadata pass a credential-shape filter; public errors are fixed codes with no input, path or exception text | `ValidationError`, `ObservationRejectedError` |
 
@@ -52,6 +54,11 @@ ordinary text.
 - **Producer identity.** Source and producer names are caller-chosen attribution,
   not authenticated identity. BlackBox has no credentials or signatures for
   producers.
+- **Host hook authenticity and completeness.** Any process running as the
+  BlackBox user can pipe a forged payload into `blackbox hook`, and a host that
+  is misconfigured, or edited by the agent, can stop calling it. Hook records
+  prove what was reported, not that the tool ran. An agent that can edit the
+  host's hook settings can switch recording off; keep them where it cannot.
 - **Code running as the BlackBox user.** Such code can alter the database, the
   installed package, the `git` executable found on `PATH`, or the operator's
   global and system Git configuration. The Git observer trusts all of these.

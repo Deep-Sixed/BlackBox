@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.5.1
+# Supported public API — BlackBox 0.6.0
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -14,6 +14,8 @@ Package 0.5.0 keeps schema v3 and adds chain-head export, anchored integrity
 checks and the first broken receipt position; see [chain anchoring](#chain-anchoring).
 Package 0.5.1 keeps schema v3; `check_integrity` also recomputes evidence-link IDs
 and checks that a link follows the evidence it references.
+Package 0.6.0 keeps schema v3 and the Python API unchanged, and adds the
+`blackbox hook` CLI command for host lifecycle hooks; see [hooks](hooks.md).
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -216,7 +218,9 @@ prints only `status`; `claim` prints `claim_id`; `check` prints `ok`,
 prints `sequence` and `digest`; `check --anchor FILE` reads that JSON back, so
 `blackbox head > anchor.json` round-trips. An invalid anchor prints the bounded
 `invalid_input` error rather than a check envelope. Exit codes remain 0 for success, 1 for operation or
-integrity failure, and 2 for argparse usage errors. Operation failures now expose
+integrity failure, and 2 for argparse usage errors, except `hook`: it never
+exits 2, prints nothing on stdout and reports failures on stderr (see
+[hooks](hooks.md)). Operation failures now expose
 bounded `error` and `retryable` fields. Input-file read/decode failures report
 `input_unavailable_or_invalid`. `check` retains its result envelope for errors,
 including `schema_integrity`, `sqlite_integrity` and `database_unavailable`.
@@ -226,7 +230,7 @@ external consumer in isolated Python mode, outside the checkout. That consumer
 uses only public imports for initialize, capture, append claim, reconstruction,
 timeline, claims, attributed evidence links, cross-session retraction,
 integrity and chain-head anchoring. CLI smoke checks against the same installed
-wheel run `--help`, `init`, two `capture`s, a cross-session `claim --relation
+wheel run `--help`, `init`, two `capture`s, a `hook` event, a cross-session `claim --relation
 retracts`, `claims`, `check`, `head` and `check --anchor`; evidence links have
 no CLI command. Released-v1 and
 released-v2 migration/rollback tests remain in the full suite.
