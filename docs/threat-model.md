@@ -32,6 +32,8 @@ beyond making tampering *detectable*, and then only in the ways listed below.
 | A caller claiming observer or host authority, for example by naming its source `blackbox.git` | Authority comes from the code path, not the name: `capture` input is always `caller_asserted`/`unverified`; only `blackbox hook` records `host_reported` | cannot be expressed through `capture` |
 | An observed repository running a `core.fsmonitor` hook, or redirecting the observer through inherited `GIT_*` variables | Git runs with `-c core.fsmonitor=false` and a scrubbed environment | not executed |
 | An observed repository running a clean filter, or hiding edits through a filter or an `assume-unchanged` flag | Git never reads the working tree for the observer: unstaged changes compare raw working-tree bytes with index blob IDs, ignoring `assume-unchanged` | not executed; edit reported |
+| An observed repository pointing `core.worktree` at a pristine decoy copy, so Git reads the decoy instead of the edited tree | The observer finds the working tree by the nearest `.git` and passes it as `--work-tree` to every Git command, which outranks repository config | edits and untracked files in the real tree reported |
+| An observed repository hiding edits behind a `skip-worktree` flag | The flag is honoured only for files absent from disk (sparse checkout); a present file is hashed like any other | edit reported |
 | An observed repository steering the observer's reads, by replacing a directory with a symlink out of the repository or a file with a FIFO | Working-tree paths are opened one directory handle at a time with `O_NOFOLLOW` and `O_NONBLOCK`; symlinked parents are never followed, and only regular files are read | path reported deleted or changed; capture does not block |
 | An agent skipping or suppressing its own reports | With [host hooks](hooks.md), the host runtime reports each prompt, tool call and turn end; the agent is not involved | `host_reported` records, evidence still `unverified` |
 | The recorder blocking or steering the observed agent | `blackbox hook` never exits 2 (the hook "block" code) and never writes to stdout, which some hooks feed back to the agent | cannot block |
@@ -69,6 +71,11 @@ ordinary text.
   programs or read working-tree file contents. A Git feature that does
   would reopen this surface. Full isolation means running the observer in a
   sandbox (see production gaps).
+- **Deleting a skip-worktree file.** A tracked file marked skip-worktree and
+  absent from disk counts as unchanged, because that is exactly what sparse
+  checkout does. So an actor that sets the flag and then deletes the file hides
+  the deletion. Once committed, the deletion appears in `committed_delta`
+  against an earlier baseline.
 - **Large-worktree observation cost.** To avoid trusting file timestamps,
   repository filters or index hiding flags, each Git snapshot hashes the raw
   bytes of every present stage-0 tracked regular file. Work is therefore

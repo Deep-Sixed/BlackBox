@@ -566,6 +566,50 @@ def test_sparse_checkout_is_not_a_flood_of_deletions(repo):
     assert collect_git(root)["unstaged_delta"] == ["drop/f"]
 
 
+@pytest.mark.parametrize("index", ["--no-sparse-index", "--sparse-index"])
+def test_cone_sparse_checkout_leaves_absent_files_unchanged(repo, index):
+    root, git = repo
+    for name in ("kept", "dropped"):
+        (root / name).mkdir()
+        (root / name / "file").write_text(name + "\n")
+    commit_all(git, "sparse")
+    git("sparse-checkout", "init", "--cone", index)
+    git("sparse-checkout", "set", "kept")
+    assert not (root / "dropped").exists()
+    assert git_diff_names(root) == []
+    assert collect_git(root)["unstaged_delta"] == []
+    (root / "kept" / "file").write_text("edited\n")
+    assert collect_git(root)["unstaged_delta"] == ["kept/file"]
+
+
+def test_skip_worktree_flag_cannot_hide_edits(repo):
+    root, git = repo
+    git("update-index", "--skip-worktree", "tracked.txt")
+    (root / "tracked.txt").write_text("changed behind the index\n")
+    assert git_diff_names(root) == []  # plain Git is blinded
+    assert collect_git(root)["unstaged_delta"] == ["tracked.txt"]
+    # Documented limit: an absent skip-worktree file looks exactly like sparse
+    # checkout, so deleting a flagged file is not observed.
+    (root / "tracked.txt").unlink()
+    assert collect_git(root)["unstaged_delta"] == []
+
+
+def test_observing_from_inside_git_dir_uses_the_real_worktree(repo, tmp_path):
+    root, git = repo
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    (decoy / "tracked.txt").write_text("baseline\n")
+    (decoy / "decoy-only").write_text("x\n")
+    (root / "tracked.txt").write_text("edited in the real working tree\n")
+    (root / "real-only").write_text("x\n")
+    git("config", "core.worktree", str(decoy))
+    assert git("diff", "--name-only") == ""  # plain Git now looks at the decoy
+    result = collect_git(root / ".git")
+    assert result == collect_git(root)
+    assert result["unstaged_delta"] == ["tracked.txt"]
+    assert result["untracked_files"] == ["real-only"]
+
+
 def test_submodule_without_a_commit_does_not_abort_capture(repo):
     root, git = repo
     source = root.parent / "submodule-source"

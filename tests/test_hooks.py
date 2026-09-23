@@ -129,6 +129,25 @@ def test_git_snapshot_at_turn_end_is_locally_observed(database, tmp_path):
     assert views[git_id].evidence[0].verification == "locally_observed"
 
 
+def test_git_snapshot_from_a_subdirectory_covers_the_repository(database, tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "sub").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@t.invalid"]
+        + ["commit", "-q", "--allow-empty", "-m", "base"],
+        check=True,
+    )
+    (repo / "top.txt").write_text("x")
+    (repo / "sub" / "new.txt").write_text("x")
+    cwd = str(repo / "sub")
+    stop = {"session_id": SESSION, "hook_event_name": "Stop", "cwd": cwd}
+    assert hook(database, stop, "--git").returncode == 0
+    (snapshot,) = [v for k, v in sessions(database).items() if k.endswith(":git")]
+    data = snapshot.observations[0].data
+    assert data.untracked_files == ("sub/new.txt", "top.txt")
+
+
 def test_failed_git_snapshot_keeps_the_event_and_does_not_block(database, tmp_path):
     stop = {"session_id": SESSION, "hook_event_name": "Stop", "cwd": str(tmp_path)}
     result = hook(database, stop, "--git")
