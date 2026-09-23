@@ -23,7 +23,7 @@ claimed, observed, and referenced without upgrading source authority by accident
 Hash integrity is not observer authority.
 
 A matching receipt establishes consistency with locally recorded canonical
-material, subject to the [SQLite threat model](sqlite-contract.md). It does not prove that the caller's statement is true, that a
+material, subject to the [threat model](threat-model.md). It does not prove that the caller's statement is true, that a
 remote system authenticated it, or that downstream analysis verified it.
 
 Likewise, a local observer marks only the specific metadata it observed. A caller

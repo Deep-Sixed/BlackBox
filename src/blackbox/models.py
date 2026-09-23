@@ -23,7 +23,38 @@ SUSPICIOUS = re.compile(
 
 
 def canonical(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    """BlackBox canonical JSON v1; see docs/canonical-json.md. Not RFC 8785.
+
+    Every receipt, identity and schema digest hashes this exact ASCII text, so the
+    accepted value space is closed: floats (including NaN and infinities) and
+    non-string object keys are rejected instead of being coerced.
+    """
+    _require_canonical(value)
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+
+
+def _require_canonical(value: object) -> None:
+    if value is None or isinstance(value, (str, int)):  # bool is an int
+        return
+    if isinstance(value, float):
+        raise TypeError("canonical JSON forbids floating-point numbers")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError("canonical JSON object keys must be strings")
+            _require_canonical(item)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _require_canonical(item)
+        return
+    raise TypeError("value has no canonical JSON form")
 
 
 def identity(kind: str, value: object) -> str:

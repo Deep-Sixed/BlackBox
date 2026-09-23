@@ -48,6 +48,11 @@ See [docs/evidence-model.md](docs/evidence-model.md) for the claim,
 observation, receipt, integrity, authority, verification and provenance
 vocabulary used by the BlackBox contract.
 
+See [docs/threat-model.md](docs/threat-model.md) for what BlackBox defends
+against, what it deliberately does not, and what a production deployment adds.
+[docs/canonical-json.md](docs/canonical-json.md) specifies the exact bytes every
+digest covers, for independent verifiers.
+
 See [docs/sqlite-contract.md](docs/sqlite-contract.md) for schema v3, atomic
 upgrades from supported older schemas, and integrity-check semantics. Run `blackbox --database
 ./blackbox.sqlite3 init` with writer access to upgrade before using read-only queries.

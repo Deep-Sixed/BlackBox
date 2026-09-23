@@ -52,7 +52,7 @@ field in those records is included, including timestamps, event sequence,
 authority and verification; observation JSON is parsed before canonicalization.
 JSON key order and whitespace do not change canonical material.
 
-Each chain digest is SHA-256 of canonical JSON containing a format domain
+Each chain digest is SHA-256 of [canonical JSON](canonical-json.md) containing a format domain
 (`blackbox.record.v2` for existing record types, `blackbox.record.v3` for the two
 new relation types), receipt sequence, record type, record ID, explicit material
 and the previous digest. The first previous digest is 64 zeroes. Receipt sequences
@@ -74,6 +74,9 @@ Results contain no evidence values, exception messages or paths. The CLI exits 1
 on failure. Schema v2 adds `schema_version` to the previous check result shape.
 
 ## Threat model
+
+See the [consolidated threat model](threat-model.md) for everything BlackBox
+defends against, what it does not, and production gaps. Storage specifics:
 
 Hash integrity is not observer authority. Receipt integrity does not prove truth,
 remote identity, or upgrade authority. A backfilled receipt records the canonical
