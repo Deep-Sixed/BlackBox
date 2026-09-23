@@ -1,0 +1,89 @@
+# Threat model
+
+This page collects what BlackBox defends against, what it deliberately does not,
+and what a production deployment has to add. The details live in the
+[SQLite contract](sqlite-contract.md), the [evidence model](evidence-model.md),
+the [architecture](architecture.md) and [trace relationships](trace-relationships.md);
+if this page and those disagree, treat it as a documentation bug.
+
+BlackBox records and proves; it does not decide. It is local evidence
+infrastructure, not a gate: nothing here stops an agent from acting.
+
+## Trust boundary
+
+The boundary is the local operating-system user that runs BlackBox and owns the
+database file. BlackBox protects the record against callers of its API and
+against ordinary SQL writes. It does not protect the record from that user, from
+code running as that user, or from anyone else with write access to the file,
+beyond making tampering *detectable*, and then only in the ways listed below.
+
+## Defended
+
+| Threat | Mechanism | Detected as |
+| --- | --- | --- |
+| Editing or deleting history through ordinary SQL | `BEFORE UPDATE/DELETE` triggers on every table abort the write | write fails with `immutable history` |
+| Editing a stored record with the triggers bypassed, without recomputing receipts | Every record has a receipt in an append-only SHA-256 chain; observation evidence keeps its own receipt | `record_integrity`, `receipt_integrity`; `first_broken_sequence` names the first failing receipt |
+| Removing, reordering or duplicating records or receipts | Receipt sequences are contiguous and each links to the previous digest; every record needs exactly one receipt | `sequence_continuity`, `chain_integrity`, `record_coverage`, `orphan_receipt`, `duplicate_receipt` |
+| Rewriting history and recomputing every receipt, or rolling the file back to an older consistent copy, **before the latest anchor** | The operator exports `get_chain_head` and keeps it outside the writer's control; `check_integrity(anchor=...)` compares it | `anchor_mismatch`, `anchor_missing` |
+| Forged relationships: claims or claim relations whose IDs don't match their content; claims, relations or evidence links with wrong attribution or order | Claim and relation IDs are recomputed from content; all three are checked against their events and sources. Evidence-link IDs are not yet recomputed | `relationship_integrity` |
+| Changing the schema, such as dropping a trigger or adding a table | Actual schema objects are compared with the frozen definitions; unknown application IDs or versions are refused | `SchemaError` / `schema_integrity` |
+| Adopting or overwriting a non-BlackBox database | Writers refuse a database with foreign tables or identity | `SchemaError` |
+| Reusing a request ID for different input | The session fingerprint binds the ID to its input | `ConflictError`; nothing is overwritten |
+| A caller claiming observer authority, for example by naming its source `blackbox.git` | Authority comes from the code path, not the name: caller input is always `caller_asserted`/`unverified` | cannot be expressed |
+| An observed repository running a `core.fsmonitor` hook, or redirecting the observer through inherited `GIT_*` variables | Git runs with `-c core.fsmonitor=false` and a scrubbed environment | not executed |
+| Other local users reading or replacing the database file | Created `0600`; writers refuse wider permissions and symlinks | `DatabaseError` |
+| Secrets entering the store or leaking through errors | Inputs and observed Git metadata pass a credential-shape filter; public errors are fixed codes with no input, path or exception text | `ValidationError`, `ObservationRejectedError` |
+
+The credential filter is a pattern heuristic that rejects common token, key and
+URL shapes. It is not data-loss prevention and will miss secrets that look like
+ordinary text.
+
+## Not defended (on purpose or not yet)
+
+- **Rewrites after the latest anchor, or with no anchor at all.** The chain is
+  unauthenticated: it has no signature or MAC. Anyone who can write the file can
+  rewrite records and recompute every receipt, and `check_integrity` will report
+  `ok`. Anchoring protects history only up to the anchor, and only if the anchor
+  is stored where that party cannot change it.
+- **The truth of what callers submit.** Claims, caller observations, artifact
+  digests and evidence links are recorded attributions. A matching receipt proves
+  the record is unchanged, not that its statement is true.
+- **Producer identity.** Source and producer names are caller-chosen attribution,
+  not authenticated identity. BlackBox has no credentials or signatures for
+  producers.
+- **Code running as the BlackBox user.** Such code can alter the database, the
+  installed package, the `git` executable found on `PATH`, or the operator's
+  global and system Git configuration. The Git observer trusts all of these.
+- **Repository-configured Git filters (known gap).** The Git observer disables
+  only `core.fsmonitor`. A repository can still configure a clean filter
+  (`filter.<driver>.clean` or `.process`, enabled through `.gitattributes` or
+  `.git/info/attributes`). Git runs that program while comparing modified
+  working-tree files, so an observed repository can still run code inside the
+  observer and influence which paths appear changed. This is reproduced and
+  tracked for a follow-up fix.
+- **Wall-clock trust.** `recorded_at` is the local clock at write time. It is
+  not attested and can move. `sequence` is local persistence order, not
+  causality.
+- **Confidentiality.** Records are integrity-checked, not encrypted. Anyone who
+  can read the file can read its metadata.
+- **Availability and retention.** Deleting the file, filling the disk or
+  withholding the database is outside the model. BlackBox has no retention,
+  deletion or backup policy.
+- **Runtime authorization.** BlackBox does not stop an agent from acting; it
+  makes the record of the action checkable.
+
+## Production gaps
+
+| Concern | BlackBox today | A production deployment adds |
+| --- | --- | --- |
+| External anchoring | `get_chain_head` export and `check_integrity(anchor=...)`; no backend | Scheduled head export to a transparency log, an RFC 3161 timestamp authority or another operator |
+| Record authentication | Unauthenticated SHA-256 chain | Signed chain heads with keys held outside the writer's host (HSM/KMS) |
+| Producer identity | Caller-asserted names | Authenticated producers, for example signed submissions |
+| Storage | One local SQLite file, WAL, `synchronous=FULL` | Backups and write-once storage for exported heads and database copies |
+| Time | Local recording clock | Trusted timestamping; bounded clock-skew handling |
+| Confidentiality | None beyond file permissions | Encryption at rest; access control on readers |
+| Observer isolation | Git runs as the BlackBox user, against the observed repository's own config | Run the observer with a sandboxed, minimal Git configuration |
+| Canonical form | [BlackBox canonical JSON v1](canonical-json.md), not RFC 8785 | Independent verifiers implement that spec |
+
+None of these change the mechanism. They harden where its assumptions are
+enforced.

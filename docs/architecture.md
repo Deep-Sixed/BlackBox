@@ -21,7 +21,8 @@ unverified, regardless of their supplied digest. Local Git metadata is marked
 locally observed, not authenticated remote identity. The observed repository's
 own config is untrusted: the observer disables its `core.fsmonitor` hook, which
 could run programs or hide changed paths, strips inherited `GIT_*` variables and
-takes no optional index locks. Local process/OS ownership is
+takes no optional index locks. Repository-configured clean filters remain a known
+gap; see the [threat model](threat-model.md). Local process/OS ownership is
 the trust boundary; arbitrary code with database-file access is outside this model.
 
 Corrections, contests and retractions insert linked claims across sessions. The original claim is immutable.
