@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pytest
 
-RELEASE = "9779108188cadff87d2ff9ee321b491d8ec16b68"
+# Schema version -> (release tag, commit it must resolve to).
+RELEASES = {
+    1: ("v0.1.0", "9779108188cadff87d2ff9ee321b491d8ec16b68"),
+    2: ("v0.3.0", "b2377d1214da2ac4c1df387b4ae2c7cd3e3aeebd"),
+    3: ("v0.4.0", "dc503f597bc581aa4372091f6269543eaa251ea8"),
+}
 
 
 def release_fixture(tmp_path_factory, tag, release):
@@ -93,41 +98,37 @@ print(json.dumps({"ddl": DDL, "digest":schema_digest(),
     return database, json.loads(result.stdout), python, source, env
 
 
-@pytest.fixture
-def v1_database(released_v1, tmp_path):
-    path = tmp_path / "v1.sqlite3"
-    shutil.copy2(released_v1[0], path)
+def copy_database(release, tmp_path, name):
+    path = tmp_path / name
+    shutil.copy2(release[0], path)
     return path
 
 
 @pytest.fixture(scope="session")
 def released_v1(tmp_path_factory):
-    return release_fixture(tmp_path_factory, "v0.1.0", RELEASE)
+    return release_fixture(tmp_path_factory, *RELEASES[1])
 
 
 @pytest.fixture(scope="session")
 def released_v2(tmp_path_factory):
-    return release_fixture(
-        tmp_path_factory, "v0.3.0", "b2377d1214da2ac4c1df387b4ae2c7cd3e3aeebd"
-    )
-
-
-@pytest.fixture
-def v2_database(released_v2, tmp_path):
-    path = tmp_path / "v2.sqlite3"
-    shutil.copy2(released_v2[0], path)
-    return path
+    return release_fixture(tmp_path_factory, *RELEASES[2])
 
 
 @pytest.fixture(scope="session")
 def released_v3(tmp_path_factory):
-    return release_fixture(
-        tmp_path_factory, "v0.4.0", "dc503f597bc581aa4372091f6269543eaa251ea8"
-    )
+    return release_fixture(tmp_path_factory, *RELEASES[3])
+
+
+@pytest.fixture
+def v1_database(released_v1, tmp_path):
+    return copy_database(released_v1, tmp_path, "v1.sqlite3")
+
+
+@pytest.fixture
+def v2_database(released_v2, tmp_path):
+    return copy_database(released_v2, tmp_path, "v2.sqlite3")
 
 
 @pytest.fixture
 def v3_database(released_v3, tmp_path):
-    path = tmp_path / "v3.sqlite3"
-    shutil.copy2(released_v3[0], path)
-    return path
+    return copy_database(released_v3, tmp_path, "v3.sqlite3")

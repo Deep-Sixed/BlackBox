@@ -6,6 +6,7 @@ import sqlite3
 
 import pytest
 from pydantic import ValidationError as ModelValidationError
+from support import rewrite_consistently
 
 import blackbox as bb
 from blackbox.db import connect
@@ -416,38 +417,6 @@ def test_observed_evidence_does_not_promote_linking_source(trace):
     assert bb.get_session(path, origin).sources[0].authority == "caller_asserted"
     assert bb.get_session(path, witnessed) == observation
     assert bb.check_integrity(path).ok
-
-
-def rewrite_consistently(path, *statements):
-    """Edit history and recompute every receipt, as a party with file access can."""
-    from blackbox.integrity import GENESIS, digest
-
-    with sqlite3.connect(path) as db:
-        db.row_factory = sqlite3.Row
-        triggers = db.execute(
-            "SELECT name,sql FROM sqlite_master WHERE type='trigger'"
-        ).fetchall()
-        for trigger in triggers:
-            db.execute(f"DROP TRIGGER {trigger['name']}")
-        for statement, parameters in statements:
-            db.execute(statement, parameters)
-        previous = GENESIS
-        for receipt in db.execute(
-            "SELECT * FROM record_receipts ORDER BY sequence"
-        ).fetchall():
-            table = receipt["record_type"]
-            row = db.execute(
-                f"SELECT * FROM {table} WHERE id=?", (receipt["record_id"],)
-            ).fetchone()
-            current = digest(table, row, receipt["sequence"], previous)
-            db.execute(
-                "UPDATE record_receipts SET previous_digest=?, digest=? "
-                "WHERE sequence=?",
-                (previous, current, receipt["sequence"]),
-            )
-            previous = current
-        for trigger in triggers:
-            db.execute(trigger["sql"])
 
 
 @pytest.mark.parametrize("kind", ["observation", "evidence", "artifact"])
