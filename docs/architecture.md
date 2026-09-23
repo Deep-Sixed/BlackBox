@@ -23,8 +23,11 @@ own config is untrusted: the observer disables its `core.fsmonitor` hook, which
 could run programs or hide changed paths, strips inherited `GIT_*` variables and
 takes no optional index locks. Unstaged changes are found by hashing raw
 working-tree bytes against the index, so Git never runs the repository's clean
-filters on the observer's behalf and `assume-unchanged` flags cannot hide edits;
-see the [threat model](threat-model.md). Local process/OS ownership is
+filters on the observer's behalf and `assume-unchanged` flags cannot hide edits.
+The observer finds the working tree itself, by the nearest `.git`, and pins it on
+every Git command, so the repository's `core.worktree` cannot point it at a decoy
+copy; it reports the whole repository with root-relative paths whichever
+directory it is given. See the [threat model](threat-model.md). Local process/OS ownership is
 the trust boundary; arbitrary code with database-file access is outside this model.
 
 Corrections, contests and retractions insert linked claims across sessions. The original claim is immutable.

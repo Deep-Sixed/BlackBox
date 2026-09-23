@@ -31,9 +31,12 @@ def environment() -> dict[str, str]:
     return env
 
 
-def git(repo: Path, *args: str) -> bytes:
+def git(worktree: Path, *args: str) -> bytes:
+    # The command-line work tree outranks the observed repository's core.worktree,
+    # which could otherwise point the observer at a pristine decoy copy.
     result = subprocess.run(
-        ["git", *HARDENED_CONFIG, "-C", str(repo), *args],
+        ["git", *HARDENED_CONFIG, "-C", str(worktree), "--work-tree", str(worktree)]
+        + list(args),
         capture_output=True,
         check=False,
         env=environment(),
@@ -42,6 +45,19 @@ def git(repo: Path, *args: str) -> bytes:
     if result.returncode:
         raise ValueError("Git metadata collection failed")
     return result.stdout
+
+
+def worktree_root(path: Path) -> Path:
+    """The working tree containing `path`, found the way Git finds it by default.
+
+    Git's own answer (`rev-parse --show-toplevel`) follows the repository's
+    core.worktree, which the observed actor controls. Every path the observer
+    reports is relative to this root, whichever directory it was pointed at.
+    """
+    for candidate in (path, *path.parents):
+        if os.path.lexists(candidate / ".git"):
+            return candidate
+    raise ValueError("not inside a Git working tree")
 
 
 def paths(repo: Path, *args: str) -> list[str]:
@@ -72,19 +88,29 @@ def read_chunks(path: bytes):
 
 
 def entry_changed(
-    root: Path, path: bytes, mode: int, oid: str, algorithm: str, filemode: bool
+    root: Path,
+    path: bytes,
+    mode: int,
+    oid: str,
+    algorithm: str,
+    filemode: bool,
+    skip_worktree: bool = False,
 ) -> bool:
     """Compare one stage-0 index entry with the working tree, without Git filters.
 
     This is raw-byte equality: content that differs only through a legitimate
     clean filter (for example LFS or line-ending conversion) counts as changed,
     and assume-unchanged flags are ignored rather than trusted.
+
+    A skip-worktree entry that is absent is unchanged: sparse checkout leaves it
+    off disk on purpose. The flag is trusted for nothing else, because the
+    observed actor can set it: a skip-worktree file that is present is compared.
     """
     location = os.fsencode(root) + b"/" + path
     try:
         info = os.lstat(location)
     except FileNotFoundError, NotADirectoryError:
-        return True
+        return not skip_worktree
     kind = mode & 0o170000
     if kind == 0o160000:
         # A submodule counts as changed only when a different commit is checked
@@ -121,20 +147,21 @@ def unstaged_paths(root: Path) -> list[str]:
         == "true"
     )
     changed = set()
-    for record in git(root, "ls-files", "--stage", "-z").split(b"\0"):
+    # -t prefixes each entry with a status tag; S marks skip-worktree.
+    for record in git(root, "ls-files", "--stage", "-t", "-z").split(b"\0"):
         if not record:
             continue
         meta, path = record.split(b"\t", 1)
-        mode, oid, stage = meta.split(b" ")
+        tag, mode, oid, stage = meta.split(b" ")
         if stage != b"0" or entry_changed(
-            root, path, int(mode, 8), oid.decode(), algorithm, filemode
+            root, path, int(mode, 8), oid.decode(), algorithm, filemode, tag == b"S"
         ):
             changed.add(path.decode("utf-8", "surrogateescape"))
     return sorted(changed)
 
 
 def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
-    root = Path(repo).expanduser().resolve()
+    root = worktree_root(Path(repo).expanduser().resolve())
     head = git(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
     before = None
     if baseline is not None:

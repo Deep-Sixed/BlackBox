@@ -31,6 +31,8 @@ beyond making tampering *detectable*, and then only in the ways listed below.
 | Reusing a request ID for different input | The session fingerprint binds the ID to its input | `ConflictError`; nothing is overwritten |
 | A caller claiming observer or host authority, for example by naming its source `blackbox.git` | Authority comes from the code path, not the name: `capture` input is always `caller_asserted`/`unverified`; only `blackbox hook` records `host_reported` | cannot be expressed through `capture` |
 | An observed repository running a `core.fsmonitor` hook, or redirecting the observer through inherited `GIT_*` variables | Git runs with `-c core.fsmonitor=false` and a scrubbed environment | not executed |
+| An observed repository pointing `core.worktree` at a pristine decoy copy, so Git reads the decoy instead of the edited tree | The observer finds the working tree by the nearest `.git` and passes it as `--work-tree` to every Git command, which outranks repository config | edits and untracked files in the real tree reported |
+| An observed repository hiding edits behind a `skip-worktree` flag | The flag is honoured only for files absent from disk (sparse checkout); a present file is hashed like any other | edit reported |
 | An observed repository running a clean filter, or hiding edits through a filter or an `assume-unchanged` flag | Git never reads the working tree for the observer: unstaged changes compare raw working-tree bytes with index blob IDs, ignoring `assume-unchanged` | not executed; edit reported |
 | An agent skipping or suppressing its own reports | With [host hooks](hooks.md), the host runtime reports each prompt, tool call and turn end; the agent is not involved | `host_reported` records, evidence still `unverified` |
 | The recorder blocking or steering the observed agent | `blackbox hook` never exits 2 (the hook "block" code) and never writes to stdout, which some hooks feed back to the agent | cannot block |
@@ -68,6 +70,16 @@ ordinary text.
   programs or read working-tree file contents. A Git feature that does
   would reopen this surface. Full isolation means running the observer in a
   sandbox (see production gaps).
+- **Deleting a skip-worktree file.** A tracked file marked skip-worktree and
+  absent from disk counts as unchanged, because that is exactly what sparse
+  checkout does. So an actor that sets the flag and then deletes the file hides
+  the deletion. Committing the deletion is still observed.
+- **Observation cost.** Hashing raw bytes instead of trusting file timestamps
+  (which the observed actor can fake) means every Git observation reads every
+  tracked file. On a warm cache a 4,776-file, 226 MB repository took about
+  0.3 s, against 0.1 s for `git diff`. The cost grows with repository size, and
+  `blackbox hook --git` pays it at the end of every turn: on a multi-gigabyte
+  repository read from disk it can approach the host's hook timeout.
 - **Submodule contents.** A submodule counts as changed only when a different
   commit is checked out. Uncommitted edits inside a submodule are not observed,
   because inspecting them would mean running Git in that repository's working

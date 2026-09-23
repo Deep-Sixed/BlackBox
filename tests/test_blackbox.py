@@ -413,6 +413,67 @@ def test_assume_unchanged_cannot_hide_changes(repo):
     assert collect_git(root)["unstaged_delta"] == ["tracked.txt"]
 
 
+def test_subdirectory_is_observed_as_the_whole_repository(repo):
+    root, git = repo
+    (root / "sub").mkdir()
+    (root / "sub" / "f").write_text("f\n")
+    commit_all(git, "sub")
+    (root / "tracked.txt").write_text("edited outside the subdirectory\n")
+    (root / "sub" / "f").write_text("edited inside\n")
+    (root / "sub" / "staged").write_text("staged\n")
+    git("add", "sub/staged")
+    (root / "sub" / "new").write_text("untracked\n")
+    (root / "top-new").write_text("untracked\n")
+    whole = collect_git(root)
+    assert collect_git(root / "sub") == whole
+    assert whole["unstaged_delta"] == ["sub/f", "tracked.txt"]
+    assert whole["staged_delta"] == ["sub/staged"]
+    assert whole["untracked_files"] == ["sub/new", "top-new"]
+
+
+def test_repository_worktree_config_cannot_redirect_the_observer(repo, tmp_path):
+    root, git = repo
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    (decoy / "tracked.txt").write_text("baseline\n")
+    (decoy / "decoy-only").write_text("x\n")
+    (root / "tracked.txt").write_text("edited in the real working tree\n")
+    (root / "real-only").write_text("x\n")
+    git("config", "core.worktree", str(decoy))
+    assert git("diff", "--name-only") == ""  # plain Git now looks at the decoy
+    for path in (root, root / ".git"):
+        result = collect_git(path)
+        assert result["unstaged_delta"] == ["tracked.txt"]
+        assert result["untracked_files"] == ["real-only"]
+
+
+@pytest.mark.parametrize("index", ["--no-sparse-index", "--sparse-index"])
+def test_sparse_checkout_leaves_absent_files_unchanged(repo, index):
+    root, git = repo
+    for name in ("kept", "dropped"):
+        (root / name).mkdir()
+        (root / name / "file").write_text(name + "\n")
+    commit_all(git, "sparse")
+    git("sparse-checkout", "init", "--cone", index)
+    git("sparse-checkout", "set", "kept")
+    assert not (root / "dropped").exists()
+    assert git("diff", "--name-only") == ""
+    assert collect_git(root)["unstaged_delta"] == []
+    (root / "kept" / "file").write_text("edited\n")
+    assert collect_git(root)["unstaged_delta"] == ["kept/file"]
+
+
+def test_skip_worktree_cannot_hide_edits(repo):
+    root, git = repo
+    git("update-index", "--skip-worktree", "tracked.txt")
+    (root / "tracked.txt").write_text("changed behind the index\n")
+    assert git("diff", "--name-only") == ""
+    assert collect_git(root)["unstaged_delta"] == ["tracked.txt"]
+    # Documented limit: absent is indistinguishable from sparse checkout.
+    (root / "tracked.txt").unlink()
+    assert collect_git(root)["unstaged_delta"] == []
+
+
 def test_unmerged_paths_are_unstaged_changes(repo):
     root, git = repo
     git("checkout", "-qb", "other")
