@@ -209,8 +209,11 @@ def ingest(
                         append_receipt(connection, "artifacts", key)
                         event(connection, session, "ARTIFACT", key)
                 event(connection, session, "COMMITTED", session)
-        except Exception:
+        except Exception as error:
             # No exception message, raw stdout, environment, or input is persisted.
+            # FAILED_RETRYABLE means the reservation remains reusable after remediation;
+            # the failure row records whether an unchanged automatic retry is appropriate.
+            failure_retryable = 0 if isinstance(error, ObservationRejected) else 1
             # If even this transaction fails, RESERVED still supports a retry.
             with transaction(connection):
                 if state(connection, session) != "COMMITTED":
@@ -224,7 +227,7 @@ def ingest(
                             session,
                             failure_event,
                             "CAPTURE_FAILED",
-                            1,
+                            failure_retryable,
                         ),
                     )
                     append_receipt(

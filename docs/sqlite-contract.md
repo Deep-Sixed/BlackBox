@@ -89,7 +89,7 @@ lock for the backfill. No external observer authentication is introduced.
 
 ## Python consumer boundary
 
-Package 0.4.0 uses schema v3. Public reader operations raise
+Package 0.4.1 uses schema v3 (introduced by 0.4.0). Public reader operations raise
 `MigrationRequiredError` for v1/v2; `initialize` and capture/claim/link writer operations
 may migrate. `check_integrity` returns typed findings when inspection succeeds
 and raises bounded errors when the database cannot be opened or validated.

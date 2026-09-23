@@ -201,7 +201,9 @@ def test_observer_failure_is_bounded_and_retryable(database, request_data, monke
         traceback.format_exception(caught.value)
     )
     session = bb.get_timeline(database)[0].session_id
-    assert bb.get_session(database, session).status == "FAILED_RETRYABLE"
+    failed = bb.get_session(database, session)
+    assert failed.status == "FAILED_RETRYABLE"
+    assert failed.failures[-1].retryable == 1
     assert bb.check_integrity(database).ok
 
 
@@ -239,10 +241,13 @@ def test_sensitive_git_metadata_needs_remediation_not_retry(
         traceback.format_exception(caught.value)
     )
     session = bb.get_timeline(database)[0].session_id
-    assert bb.get_session(database, session).status == "FAILED_RETRYABLE"
+    rejected = bb.get_session(database, session)
+    assert rejected.status == "FAILED_RETRYABLE"
+    assert rejected.failures[-1].retryable == 0
     # An unchanged retry is rejected again; remediation makes the same request work.
     with pytest.raises(bb.ObservationRejectedError):
         bb.capture(database, request_data, repo=repo)
+    assert {failure.retryable for failure in bb.get_session(database, session).failures} == {0}
     leaked.rename(repo / "renamed.txt")
     assert bb.capture(database, request_data, repo=repo).status == "COMMITTED"
     assert bb.check_integrity(database).ok
