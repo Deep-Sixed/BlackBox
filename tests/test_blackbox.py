@@ -473,6 +473,156 @@ def test_submodule_counts_as_changed_only_on_a_different_commit(repo, tmp_path):
     assert collect_git(root)["unstaged_delta"] == ["sub"]
 
 
+def git_diff_names(root):
+    listing = subprocess.check_output(
+        ["git", "-C", str(root), "diff", "--name-only", "-z"]
+    )
+    return sorted(p for p in listing.decode().split("\0") if p)
+
+
+def test_subfolder_observation_is_repo_wide_and_ignores_core_worktree(
+    repo, tmp_path
+):
+    root, git = repo
+    (root / "sub").mkdir()
+    (root / "sub" / "f").write_text("f\n")
+    (root / "sub" / "staged").write_text("staged\n")
+    (root / "committed").write_text("before\n")
+    commit_all(git, "subfolder baseline")
+    baseline = git("rev-parse", "HEAD")
+
+    (root / "committed").write_text("after\n")
+    commit_all(git, "top-level committed change")
+    (root / "sub" / "staged").write_text("index change\n")
+    git("add", "sub/staged")
+    (root / "sub" / "f").write_text("dirty in sub\n")
+    (root / "tracked.txt").write_text("dirty at top\n")
+    (root / "sub" / "new").write_text("untracked\n")
+
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    (decoy / "decoy.txt").write_text("not the worktree\n")
+    git("config", "core.worktree", str(decoy))
+
+    from_root = collect_git(root, baseline)
+    from_subfolder = collect_git(root / "sub", baseline)
+    assert from_subfolder == from_root
+    assert from_subfolder["committed_delta"] == ["committed"]
+    assert from_subfolder["staged_delta"] == ["sub/staged"]
+    assert from_subfolder["unstaged_delta"] == ["sub/f", "tracked.txt"]
+    assert from_subfolder["working_tree_delta"] == [
+        "sub/f",
+        "sub/staged",
+        "tracked.txt",
+    ]
+    assert from_subfolder["untracked_files"] == ["sub/new"]
+
+
+def test_symlinked_parent_is_not_followed_out_of_the_repository(repo, tmp_path):
+    root, git = repo
+    (root / "dir").mkdir()
+    (root / "dir" / "f").write_text("inside\n")
+    commit_all(git, "dir")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "f").write_text("inside\n")  # identical bytes, outside the repo
+    for child in (root / "dir").iterdir():
+        child.unlink()
+    (root / "dir").rmdir()
+    (root / "dir").symlink_to(outside)
+    assert git_diff_names(root) == ["dir/f"]  # Git reports it deleted
+    assert collect_git(root)["unstaged_delta"] == ["dir/f"]
+
+
+def test_fifo_in_place_of_a_tracked_file_cannot_block_capture(repo):
+    import threading
+
+    root, _ = repo
+    (root / "tracked.txt").unlink()
+    os.mkfifo(root / "tracked.txt")
+    result = {}
+    worker = threading.Thread(
+        target=lambda: result.update(collect_git(root)), daemon=True
+    )
+    worker.start()
+    worker.join(timeout=10)
+    assert not worker.is_alive(), "collect_git blocked opening a FIFO"
+    assert result["unstaged_delta"] == ["tracked.txt"]
+
+
+def test_sparse_checkout_is_not_a_flood_of_deletions(repo):
+    root, git = repo
+    for directory in ("keep", "drop"):
+        (root / directory).mkdir()
+        (root / directory / "f").write_text(directory + "\n")
+    commit_all(git, "sparse")
+    git("sparse-checkout", "set", "keep")
+    assert not (root / "drop").exists()
+    assert git_diff_names(root) == []
+    assert collect_git(root)["unstaged_delta"] == []
+    # A present skip-worktree file is still compared: the flag cannot hide an edit.
+    (root / "drop").mkdir()
+    (root / "drop" / "f").write_text("edited under skip-worktree\n")
+    assert collect_git(root)["unstaged_delta"] == ["drop/f"]
+
+
+def test_submodule_without_a_commit_does_not_abort_capture(repo):
+    root, git = repo
+    source = root.parent / "submodule-source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    (source / "a.txt").write_text("a\n")
+
+    def srcgit(*args):
+        return (
+            subprocess.check_output(["git", "-C", str(source), *args]).decode().strip()
+        )
+
+    commit_all(srcgit, "first")
+    git(
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        f"160000,{srcgit('rev-parse', 'HEAD')},sub",
+    )
+    # Commit the gitlink alone: `add -A` would stage its removal (no sub/ yet).
+    git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "gitlink",
+    )
+    (root / "sub").mkdir()
+    subprocess.run(["git", "init", "-q", str(root / "sub")], check=True)
+    assert collect_git(root)["unstaged_delta"] == ["sub"]
+
+
+def test_many_directories_do_not_exhaust_file_descriptors(repo):
+    root, git = repo
+    for index in range(300):
+        (root / f"d{index:03}").mkdir()
+        (root / f"d{index:03}" / "f").write_text(f"{index}\n")
+    commit_all(git, "many directories")
+    (root / "d150" / "f").write_text("changed\n")
+    script = (
+        "import resource, sys\n"
+        "resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))\n"
+        "from blackbox.provenance import collect_git\n"
+        "print(collect_git(sys.argv[1])['unstaged_delta'])\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-300:]
+    assert result.stdout.strip() == "['d150/f']"
+
+
 def test_local_observer_authority_cannot_be_claimed_by_input(
     database, capture_request, repo
 ):

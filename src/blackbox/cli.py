@@ -130,7 +130,8 @@ def main() -> int:
             result = {"error": error.code, "retryable": error.retryable}
         print(json.dumps(result, sort_keys=True))
         return 1
-    except json.JSONDecodeError, UnicodeError, OSError:
+    except json.JSONDecodeError, UnicodeError, OSError, RecursionError:
+        # RecursionError: input JSON nested deeper than the parser can follow.
         print('{"error":"input_unavailable_or_invalid","retryable":false}')
         return 1
 

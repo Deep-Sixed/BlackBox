@@ -32,6 +32,7 @@ beyond making tampering *detectable*, and then only in the ways listed below.
 | A caller claiming observer or host authority, for example by naming its source `blackbox.git` | Authority comes from the code path, not the name: `capture` input is always `caller_asserted`/`unverified`; only `blackbox hook` records `host_reported` | cannot be expressed through `capture` |
 | An observed repository running a `core.fsmonitor` hook, or redirecting the observer through inherited `GIT_*` variables | Git runs with `-c core.fsmonitor=false` and a scrubbed environment | not executed |
 | An observed repository running a clean filter, or hiding edits through a filter or an `assume-unchanged` flag | Git never reads the working tree for the observer: unstaged changes compare raw working-tree bytes with index blob IDs, ignoring `assume-unchanged` | not executed; edit reported |
+| An observed repository steering the observer's reads, by replacing a directory with a symlink out of the repository or a file with a FIFO | Working-tree paths are opened one directory handle at a time with `O_NOFOLLOW` and `O_NONBLOCK`; symlinked parents are never followed, and only regular files are read | path reported deleted or changed; capture does not block |
 | An agent skipping or suppressing its own reports | With [host hooks](hooks.md), the host runtime reports each prompt, tool call and turn end; the agent is not involved | `host_reported` records, evidence still `unverified` |
 | The recorder blocking or steering the observed agent | `blackbox hook` never exits 2 (the hook "block" code) and never writes to stdout, which some hooks feed back to the agent | cannot block |
 | Other local users reading or replacing the database file | Created `0600`; writers refuse wider permissions and symlinks | `DatabaseError` |
@@ -68,6 +69,12 @@ ordinary text.
   programs or read working-tree file contents. A Git feature that does
   would reopen this surface. Full isolation means running the observer in a
   sandbox (see production gaps).
+- **Large-worktree observation cost.** To avoid trusting file timestamps,
+  repository filters or index hiding flags, each Git snapshot hashes the raw
+  bytes of every present stage-0 tracked regular file. Work is therefore
+  proportional to tracked working-tree bytes; on very large or cold repositories,
+  `hook --git` can add noticeable turn-end latency. This is the deliberate
+  availability/performance cost of the stronger observation rule.
 - **Submodule contents.** A submodule counts as changed only when a different
   commit is checked out. Uncommitted edits inside a submodule are not observed,
   because inspecting them would mean running Git in that repository's working
