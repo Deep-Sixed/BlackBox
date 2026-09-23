@@ -168,7 +168,7 @@ def test_cli_head_round_trips_into_check(database, tmp_path):
     assert checked.returncode == 0
     assert json.loads(checked.stdout) == {
         "ok": True,
-        "schema_version": 3,
+        "schema_version": 4,
         "errors": [],
         "first_broken_sequence": None,
     }

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .api import (
+    _capture_host_report,
     append_claim,
     check_integrity,
     get_chain_head,
@@ -147,7 +148,7 @@ def run_hook(args) -> int:
             )
         except ValueError, TypeError, RecursionError:
             raise ValidationError() from None
-        capture_session(args.database, event)
+        _capture_host_report(args.database, event)
         if git is not None:
             capture_session(args.database, git, repo=repo)
     except BlackBoxError as error:

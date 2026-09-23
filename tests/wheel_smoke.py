@@ -101,11 +101,13 @@ def main(wheel):
             for item in run("timeline")
             if item["kind"] == "COMMITTED" and item["session_id"] not in sessions
         ]
-        (observation,) = run("show", committed["session_id"])["observations"]
+        hook_session = run("show", committed["session_id"])
+        (observation,) = hook_session["observations"]
         assert observation["data"]["name"] == "PostToolUse:Bash"
+        assert hook_session["sources"][0]["authority"] == "host_reported"
         intact = {
             "ok": True,
-            "schema_version": 3,
+            "schema_version": 4,
             "errors": [],
             "first_broken_sequence": None,
         }

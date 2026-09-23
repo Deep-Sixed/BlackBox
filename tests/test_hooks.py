@@ -6,6 +6,7 @@ import sys
 import pytest
 
 import blackbox as bb
+from blackbox.api import _capture_host_report
 
 SESSION = "0f8e2c1a-5b6d-4e7f-8a9b-0c1d2e3f4a5b"
 
@@ -68,8 +69,8 @@ def test_tool_event_records_only_metadata_and_payload_digest(database):
         "duration_ms": None,
         "content_digest": hashlib.sha256(raw).hexdigest(),
     }
-    # Host-reported is still an assertion: BlackBox did not witness the tool run.
-    assert [s.authority for s in view.sources] == ["caller_asserted"]
+    # The host reported it; BlackBox did not witness the tool run.
+    assert [s.authority for s in view.sources] == ["host_reported"]
     assert [e.verification for e in view.evidence] == ["unverified"]
     stored = b"".join(p.read_bytes() for p in database.parent.iterdir())
     assert b"marker-7f3a" not in stored and b"hunter2-value" not in stored
@@ -171,3 +172,36 @@ def test_hook_usage_errors_never_use_the_blocking_exit_code(database):
         check=False,
     )
     assert result.returncode == 1
+
+
+def test_host_reported_authority_comes_only_from_the_hook_path(database):
+    observation = {"source": "claude-code", "kind": "activity", "name": "Stop"}
+    request = {"request_id": "r1", "producer": "claude-code"}
+    request["observations"] = [observation]
+    caller = bb.capture(database, request)
+    # Same request ID through the host path: a conflict, never a silent duplicate.
+    with pytest.raises(bb.ConflictError):
+        _capture_host_report(database, request)
+    host = _capture_host_report(database, {**request, "request_id": "r2"})
+    authorities = [
+        bb.get_session(database, key).sources[0].authority
+        for key in (caller.session_id, host.session_id)
+    ]
+    assert authorities == ["caller_asserted", "host_reported"]
+    # Retrying the host report stays a duplicate of the host record.
+    assert _capture_host_report(database, {**request, "request_id": "r2"}).duplicate
+    assert bb.check_integrity(database).ok
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"claims": [{"source": "claude-code", "topic": "t", "statement": "s"}]},
+        {"artifacts": [{"source": "claude-code", "path": "p", "digest": "0" * 64}]},
+    ],
+)
+def test_host_reports_cannot_carry_claims_or_artifacts(database, extra):
+    request = {"request_id": "r1", "producer": "claude-code", **extra}
+    with pytest.raises(bb.ValidationError):
+        _capture_host_report(database, request)
+    assert not database.exists()

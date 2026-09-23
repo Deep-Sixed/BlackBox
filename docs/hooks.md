@@ -7,7 +7,8 @@ does not call BlackBox, cannot skip the call, and never sees it.
 
 This is the first observer that is not driven by the agent's own submissions.
 It is still not independent observation: the **host** reports the event, and
-BlackBox records that report. See [authority](#authority) below.
+BlackBox records that report under its own `host_reported` authority. See
+[authority](#authority) below.
 
 ## Claude Code setup
 
@@ -47,7 +48,7 @@ Each event becomes one capture session holding one observation:
 | Field | Value |
 | --- | --- |
 | `request_id` | `<session_id>:<event>:<tool_use_id>` for `PreToolUse`, `PostToolUse` and `PostToolUseFailure`; otherwise `<session_id>:<event>:<random hex>` |
-| `producer`, `source` | `--producer` |
+| `producer`, `source` | `--producer`; the source's authority is `host_reported` |
 | `kind` | `command` for the `Bash` tool, otherwise `activity` |
 | `name` | `<event>:<tool_name>` for tool events, otherwise `<event>` |
 | `content_digest` | SHA-256 of the exact payload bytes the host delivered |
@@ -75,12 +76,18 @@ ran, not the host's.
 
 `actor assertion != host report != observer observation != BlackBox persistence`.
 
-A hook event is reported by the host, not by the agent, but BlackBox did not
-witness the tool run. Hook records are therefore stored as `caller_asserted`
-with `unverified` evidence, like any other caller submission. The host's
-identity is not authenticated either: any process running as the same user can
-pipe a payload into `blackbox hook`. Only the `--git` snapshot is BlackBox's own
-observation.
+Hook events have their own authority, `host_reported` (schema v4): the host
+reported the event, not the agent. The authority comes from the code path, not a
+name: only `blackbox hook` produces it, and `capture` input stays
+`caller_asserted` whatever it calls its source. A request ID first recorded
+through one path conflicts on the other instead of being taken as a duplicate.
+Host reports carry observations only, never claims or artifacts.
+
+`host_reported` is not verification. BlackBox did not witness the tool run, so
+the evidence stays `unverified`. The host's identity is not authenticated
+either: any process running as the same user can pipe a payload into
+`blackbox hook`. Only the `--git` snapshot is BlackBox's own observation
+(`local_git`, `locally_observed`).
 
 ## Never blocks
 

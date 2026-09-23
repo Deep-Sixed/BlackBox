@@ -152,7 +152,7 @@ def _output(model, value):
 
 @_boundary
 def initialize(database: str | Path) -> InitializationResult:
-    """Create a v3 store or atomically migrate a supported older store."""
+    """Create a v4 store or atomically migrate a supported older store."""
     _db.connect(_path(database)).close()
     return InitializationResult(schema_version=VERSION)
 
@@ -179,6 +179,19 @@ def capture(
     return _output(
         CaptureResult, _ingest.ingest(database, validated, repo=repo, baseline=baseline)
     )
+
+
+@_boundary
+def _capture_host_report(
+    database: str | Path, request: Mapping[str, object]
+) -> CaptureResult:
+    """Record a host lifecycle-hook report: the only path to `host_reported`.
+
+    Private: the `blackbox hook` CLI is the supported interface.
+    """
+    _path(database)
+    validated = _input(Capture, request)
+    return _output(CaptureResult, _ingest.ingest(database, validated, host=True))
 
 
 @_boundary

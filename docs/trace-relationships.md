@@ -80,7 +80,8 @@ BM25, semantic ranking and interpretation belong to downstream consumers.
 
 BlackBox already independently observes local Git metadata. Since package 0.6.0,
 `blackbox hook` records tool calls as reported by the agent's host runtime
-through its lifecycle hooks; these remain `caller_asserted` (see [hooks](hooks.md)).
+through its lifecycle hooks, under the schema-v4 `host_reported` authority with
+unverified evidence (see [hooks](hooks.md)).
 Independently witnessed tool/process execution is the next planned observer
 boundary: the first execution observer. Additional
 filesystem, CI, model-traffic and evaluation-specific observers are future work.

@@ -33,9 +33,11 @@ UTC recording times support reconstruction. Derived summaries are read-only view
 never source records.
 
 Host lifecycle hooks (`blackbox hook`) let an agent's host runtime report each
-prompt, tool call and turn end without the agent's involvement. The host's
-report stays a caller assertion: BlackBox stores a payload digest, not the
-payload, and never blocks the observed action. See [hooks](hooks.md).
+prompt, tool call and turn end without the agent's involvement. Schema v4 gives
+these reports their own `host_reported` authority; their evidence stays
+unverified, because BlackBox did not witness the action. BlackBox stores a
+payload digest, not the payload, and never blocks the observed action. See
+[hooks](hooks.md).
 
 The Python library and CLI are the supported interfaces. Network transports,
 production deployment integration, retention/deletion, external authentication,

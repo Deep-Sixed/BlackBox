@@ -117,3 +117,17 @@ def v2_database(released_v2, tmp_path):
     path = tmp_path / "v2.sqlite3"
     shutil.copy2(released_v2[0], path)
     return path
+
+
+@pytest.fixture(scope="session")
+def released_v3(tmp_path_factory):
+    return release_fixture(
+        tmp_path_factory, "v0.4.0", "dc503f597bc581aa4372091f6269543eaa251ea8"
+    )
+
+
+@pytest.fixture
+def v3_database(released_v3, tmp_path):
+    path = tmp_path / "v3.sqlite3"
+    shutil.copy2(released_v3[0], path)
+    return path

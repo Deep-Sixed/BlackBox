@@ -11,7 +11,7 @@ def exercise(database):
     assert version("blackbox") == bb.__version__ == "0.6.0"
     initialized = bb.initialize(database)
     assert isinstance(initialized, bb.InitializationResult)
-    assert initialized.schema_version == 3
+    assert initialized.schema_version == 4
     request = {
         "request_id": "external-consumer",
         "producer": "consumer",
@@ -86,7 +86,7 @@ def exercise(database):
     assert isinstance(checked, bb.IntegrityResult) and checked.ok
     assert checked.model_dump(mode="json") == {
         "ok": True,
-        "schema_version": 3,
+        "schema_version": 4,
         "errors": [],
         "first_broken_sequence": None,
     }

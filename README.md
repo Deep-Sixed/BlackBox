@@ -24,7 +24,8 @@ planned; the current runtime does not independently witness process execution.
 what the agent does without the agent reporting it. The host runs the command on
 its own lifecycle events (prompt submitted, before and after each tool call,
 turn end) and pipes the event as JSON on stdin. BlackBox keeps the event and
-tool names and a digest of the payload, never the payload itself. With `--git`
+tool names and a digest of the payload, never the payload itself, under a
+separate `host_reported` authority (schema v4). With `--git`
 it also takes its own Git snapshot at the end of each turn. The command never
 blocks the agent. See [docs/hooks.md](docs/hooks.md) for the settings snippet
 and what the records do and do not prove.
@@ -64,7 +65,7 @@ against, what it deliberately does not, and what a production deployment adds.
 [docs/canonical-json.md](docs/canonical-json.md) specifies the exact bytes every
 digest covers, for independent verifiers.
 
-See [docs/sqlite-contract.md](docs/sqlite-contract.md) for schema v3, atomic
+See [docs/sqlite-contract.md](docs/sqlite-contract.md) for schema v4, atomic
 upgrades from supported older schemas, and integrity-check semantics. Run `blackbox --database
 ./blackbox.sqlite3 init` with writer access to upgrade before using read-only queries.
 

@@ -21,8 +21,10 @@ triggers against the known schema; copying a digest cannot hide schema changes.
 
 Schema v2 added `schema_migrations` and `record_receipts`; its definition is frozen
 in `migrations/v002.py`. Schema v3 adds `claim_relations` and `evidence_links`.
-Fresh databases install v3 directly (`0 → 3`); existing stores use sequential
-`1 → 2 → 3` or `2 → 3` upgrades. Each historical definition remains frozen. There is no downgrade or automatic malformed-data repair.
+Schema v4 adds `host_reported` to the allowed `sources.authority` values; see
+[schema v4](#schema-v4-host-reported-authority).
+Fresh databases install v4 directly (`0 → 4`); existing stores use sequential
+`1 → 2 → 3 → 4`, `2 → 3 → 4` or `3 → 4` upgrades. Each historical definition remains frozen. There is no downgrade or automatic malformed-data repair.
 
 Writer initialization (`blackbox init`, or a capture's writer open) holds
 `BEGIN IMMEDIATE`, rechecks the version under the write lock, validates the old
@@ -32,11 +34,11 @@ commit together. Failure, including a write error, rolls them back. No canonical
 row, identifier, event sequence, authority or verification classification changes.
 The migration history has version, previous version, schema digest and installation
 time only. V1 had no migration journal: v2 records the real upgrade, without
-inventing a timestamp for a historical v1 installation. Fresh v3 records `0 → 3`.
+inventing a timestamp for a historical v1 installation. Fresh v4 records `0 → 4`.
 History and metadata reject UPDATE/DELETE.
 
 Read-only connections use SQLite URI `mode=ro` and `query_only=ON`. They never
-migrate. V1/v2 readers using current code must first arrange writer initialization;
+migrate. V1/v2/v3 readers using current code must first arrange writer initialization;
 `blackbox check` returns a bounded schema error until that occurs. Unknown versions,
 wrong application IDs and malformed schemas fail closed. Queries use a consistent
 read transaction where multiple reads form one result; WAL allows concurrent
@@ -97,8 +99,8 @@ lock for the backfill. No external observer authentication is introduced.
 
 ## Python consumer boundary
 
-Package 0.6.0 uses schema v3 (introduced by 0.4.0). Public reader operations raise
-`MigrationRequiredError` for v1/v2; `initialize` and capture/claim/link writer operations
+Package 0.6.0 uses schema v4 (introduced by 0.6.0). Public reader operations raise
+`MigrationRequiredError` for v1/v2/v3; `initialize` and capture/claim/link writer operations
 may migrate. `check_integrity` returns typed findings when inspection succeeds
 and raises bounded errors when the database cannot be opened or validated.
 The CLI continues to serialize these outcomes into its check-result envelope.
@@ -110,3 +112,28 @@ to existing CLAIM events and appends new receipts. It preserves the entire old
 receipt prefix and original canonical rows/events. Missing or inconsistent claim
 events fail migration rather than receiving fabricated timestamps. See the
 [relationship contract](trace-relationships.md) for projections and status rules.
+
+## Schema v4: host-reported authority
+
+Schema v4 widens one constraint: `sources.authority` also accepts
+`host_reported`, the authority of events delivered by [host lifecycle
+hooks](hooks.md). It adds no table, column, index or trigger and changes no
+stored row, identifier, event or receipt. Receipt material and formats are
+unchanged; a `host_reported` source uses the same `blackbox.record.v2` material
+as any other source.
+
+SQLite cannot `ALTER` a CHECK constraint. Rebuilding `sources` under a
+temporary name would leave its stored definition different from a fresh
+install's and would drop a table that observations, claims, artifacts and
+evidence links reference. Because a widened CHECK accepts every existing row
+and does not change how rows are stored, the upgrade instead follows SQLite's
+documented procedure for such definition-only changes: inside the migration's
+`BEGIN IMMEDIATE` transaction it enables `writable_schema`, replaces the frozen
+v3 `sources` definition with the v4 one (only if the stored text is exactly the
+v3 definition), increments `schema_version` so other open connections reload
+the schema, disables `writable_schema` and runs `integrity_check`. The result
+is byte-identical to a fresh v4 install, which normal schema validation then
+checks. A failure rolls back the definition with the rest of the migration.
+
+Released v3 code refuses a v4 store as an unsupported schema; there is no
+downgrade.
