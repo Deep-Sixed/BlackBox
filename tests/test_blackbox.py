@@ -422,7 +422,16 @@ def test_unmerged_paths_are_unstaged_changes(repo):
     (root / "tracked.txt").write_text("main\n")
     commit_all(git, "main")
     with pytest.raises(subprocess.CalledProcessError):
-        git("merge", "-q", "other")
+        git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "merge",
+            "-q",
+            "other",
+        )
+    assert git("ls-files", "--unmerged")  # stopped on the conflict, not earlier
     assert collect_git(root)["unstaged_delta"] == ["tracked.txt"]
 
 
