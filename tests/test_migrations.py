@@ -1,9 +1,9 @@
 import concurrent.futures
 import json
 import sqlite3
-import subprocess
 
 import pytest
+from support import run_release
 
 from blackbox import migrations
 from blackbox.db import connect
@@ -56,28 +56,21 @@ def test_rollback_readable_by_released_code(
             "SELECT name FROM sqlite_master WHERE name IN ('record_receipts','schema_migrations')"
         ).fetchall()
         assert db.execute("SELECT version FROM schema_metadata").fetchall() == [(1,)]
-    _, snapshot, python, source, env = released_v1
-    result = subprocess.run(
-        [
-            str(python),
-            "-c",
-            """
+    snapshot = released_v1[1]
+    # v0.1.0 predates the public API, so read through its query module.
+    result = run_release(
+        released_v1,
+        """
 import json,sys
 from blackbox.query import integrity,reconstruct
 assert integrity(sys.argv[1])["ok"]
 print(json.dumps([reconstruct(sys.argv[1], s) for s in json.loads(sys.argv[2])]))
 """,
-            str(v1_database),
-            json.dumps([r["session"]["id"] for r in snapshot["records"]]),
-        ],
-        cwd=source,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=True,
+        v1_database,
+        json.dumps([r["session"]["id"] for r in snapshot["records"]]),
     )
     assert json.loads(result.stdout) == snapshot["records"]
-    monkeypatch.setitem(migrations.UPGRADES, 1, original)
+    monkeypatch.undo()
     connect(v1_database).close()
     assert integrity(v1_database)["ok"]
 

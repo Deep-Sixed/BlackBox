@@ -3,9 +3,10 @@
 import concurrent.futures
 import json
 import sqlite3
-import subprocess
 
 import pytest
+import support
+from support import READ_RECORDS, UPGRADE_LEDGER, run_release
 
 import blackbox as bb
 from blackbox import migrations
@@ -14,16 +15,7 @@ from blackbox.migrations import v002
 
 
 def snapshot(path):
-    with sqlite3.connect(path) as db:
-        return {
-            table: db.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
-            for table in (
-                *V2_RECORD_FIELDS,
-                "record_receipts",
-                "schema_metadata",
-                "schema_migrations",
-            )
-        }
+    return support.snapshot(path, (*V2_RECORD_FIELDS, *UPGRADE_LEDGER))
 
 
 def test_frozen_v2_definition_matches_actual_release(released_v2):
@@ -39,7 +31,7 @@ def test_v2_upgrade_preserves_rows_receipt_prefix_and_event_times(
     after = snapshot(v2_database)
     for table in V2_RECORD_FIELDS:
         assert after[table] == before[table]
-    for table in ("record_receipts", "schema_metadata", "schema_migrations"):
+    for table in UPGRADE_LEDGER:
         assert after[table][: len(before[table])] == before[table]
     for original in released_v2[1]["records"]:
         assert (
@@ -94,28 +86,15 @@ def test_v3_failure_rolls_back_and_actual_v2_release_still_reads(
         assert not db.execute(
             "SELECT name FROM sqlite_master WHERE name IN ('claim_relations','evidence_links')"
         ).fetchall()
-    _, old, python, source, env = released_v2
-    result = subprocess.run(
-        [
-            str(python),
-            "-c",
-            """
-import blackbox as bb, json,sys
-assert bb.check_integrity(sys.argv[1]).ok
-print(json.dumps([bb.get_session(sys.argv[1],s).model_dump(mode="json") for s in json.loads(sys.argv[2])]))
-""",
-            str(v2_database),
-            json.dumps([r["session"]["id"] for r in old["records"]]),
-        ],
-        cwd=source,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
+    old = released_v2[1]
+    result = run_release(
+        released_v2,
+        READ_RECORDS,
+        v2_database,
+        json.dumps([r["session"]["id"] for r in old["records"]]),
     )
     assert json.loads(result.stdout) == old["records"]
-    monkeypatch.setitem(migrations.UPGRADES, 2, original_upgrade)
-    monkeypatch.setattr(migrations, "validate", original_validate)
+    monkeypatch.undo()
     bb.initialize(v2_database)
     assert bb.check_integrity(v2_database).ok
 

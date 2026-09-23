@@ -3,9 +3,10 @@
 import concurrent.futures
 import json
 import sqlite3
-import subprocess
 
 import pytest
+import support
+from support import READ_RECORDS, UPGRADE_LEDGER, run_release
 
 import blackbox as bb
 from blackbox import migrations
@@ -21,16 +22,7 @@ HOST_REPORT = {
 
 
 def snapshot(path):
-    with sqlite3.connect(path) as db:
-        return {
-            table: db.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
-            for table in (
-                *RECORD_FIELDS,
-                "record_receipts",
-                "schema_metadata",
-                "schema_migrations",
-            )
-        }
+    return support.snapshot(path, (*RECORD_FIELDS, *UPGRADE_LEDGER))
 
 
 def schema(path):
@@ -38,18 +30,6 @@ def schema(path):
         return db.execute(
             "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
         ).fetchall()
-
-
-def released(released_v3, script, *args, check=True):
-    _, _, python, source, env = released_v3
-    return subprocess.run(
-        [str(python), "-c", script, *map(str, args)],
-        cwd=source,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=check,
-    )
 
 
 def test_frozen_v3_definition_matches_actual_release(released_v3):
@@ -108,7 +88,7 @@ def test_open_connections_see_the_widened_check(v3_database):
 
 def test_released_v3_code_refuses_a_v4_store(v3_database, released_v3):
     bb.initialize(v3_database)
-    result = released(
+    result = run_release(
         released_v3,
         "import blackbox as bb, sys; bb.check_integrity(sys.argv[1])",
         v3_database,
@@ -155,20 +135,14 @@ def test_v4_failure_rolls_back_and_actual_v3_release_still_reads(
     with sqlite3.connect(v3_database) as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 3
     old = released_v3[1]
-    result = released(
+    result = run_release(
         released_v3,
-        """
-import blackbox as bb, json, sys
-assert bb.check_integrity(sys.argv[1]).ok
-print(json.dumps([bb.get_session(sys.argv[1], s).model_dump(mode="json")
-                  for s in json.loads(sys.argv[2])]))
-""",
+        READ_RECORDS,
         v3_database,
         json.dumps([r["session"]["id"] for r in old["records"]]),
     )
     assert json.loads(result.stdout) == old["records"]
-    monkeypatch.setitem(migrations.UPGRADES, 3, original_upgrade)
-    monkeypatch.setattr(migrations, "validate", original_validate)
+    monkeypatch.undo()
     bb.initialize(v3_database)
     assert bb.check_integrity(v3_database).ok
 
