@@ -8,7 +8,7 @@ import blackbox as bb
 
 
 def exercise(database):
-    assert version("blackbox") == bb.__version__ == "0.4.1"
+    assert version("blackbox") == bb.__version__ == "0.5.0"
     initialized = bb.initialize(database)
     assert isinstance(initialized, bb.InitializationResult)
     assert initialized.schema_version == 3
@@ -88,7 +88,11 @@ def exercise(database):
         "ok": True,
         "schema_version": 3,
         "errors": [],
+        "first_broken_sequence": None,
     }
+    head = bb.get_chain_head(database)
+    assert isinstance(head, bb.ChainHead) and head.sequence > 0
+    assert bb.check_integrity(database, anchor=head.model_dump()).ok
     try:
         bb.capture(database, {**request, "producer": "different"})
     except bb.ConflictError as error:
@@ -96,7 +100,7 @@ def exercise(database):
     else:
         raise AssertionError("conflicting identity accepted")
     print(
-        "Installed public API: initialize, capture, claims, reconstruction, timeline, attributed evidence links, cross-session retraction, integrity passed"
+        "Installed public API: initialize, capture, claims, reconstruction, timeline, attributed evidence links, cross-session retraction, integrity, chain head passed"
     )
 
 

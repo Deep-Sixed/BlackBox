@@ -1,8 +1,8 @@
-# Supported public API — BlackBox 0.4.1
+# Supported public API — BlackBox 0.5.0
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
-The ten operations are also explicitly exported by `blackbox.api`.
+The eleven operations are also explicitly exported by `blackbox.api`.
 Other submodules are implementation details even when Python makes them
 accessible as package attributes. Do not depend on raw connections, migration
 functions, row dictionaries or private helpers. The wheel includes `py.typed`.
@@ -10,6 +10,8 @@ functions, row dictionaries or private helpers. The wheel includes `py.typed`.
 Package 0.3.0 established the public boundary. Package 0.4.0 adds attributed
 relationships and schema v3; see [relationship semantics](trace-relationships.md).
 Package 0.4.1 keeps schema v3 and hardens observer rejection/retry reporting.
+Package 0.5.0 keeps schema v3 and adds chain-head export, anchored integrity
+checks and the first broken receipt position; see [chain anchoring](#chain-anchoring).
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -26,7 +28,7 @@ Future public breaking changes require an explicit versioned contract change.
 | `db.connect` | INTERNAL | Public administrative `initialize` returns version/status and closes its handle. Consumers never own a BlackBox connection. |
 | `db.now`, `db.transaction`, `db.verify_schema`, `db.schema_digest` | INTERNAL | Clock, transaction, schema validation and digest mechanics are not consumer contracts. |
 | `ingest.event`, `state`, `source`, `observation`, `claim_row` | INTERNAL | These helpers require transaction context and must not bypass input/receipt rules. |
-| `integrity.digest`, `append_receipt`, `evidence_errors`, `record_errors` | INTERNAL | Canonical material and chain mechanics remain storage concerns. |
+| `integrity.digest`, `append_receipt`, `evidence_errors`, `record_errors`, `receipt_findings`, `chain_head`, `anchor_errors` | INTERNAL | Canonical material and chain mechanics remain storage concerns. |
 | `migrations.schema_digest`, `schema_objects`, `validate`, `install`, `v002.upgrade` | INTERNAL | Only writer initialization owns schema evolution; no direct migration API. |
 | `models.canonical`, `identity`, `safe_strings`, model validators | INTERNAL | IDs, serialization and input validation are accessed through public operations. |
 | `provenance.git`, `paths`, `collect_git` | INTERNAL | Opt into local Git observation using `capture(repo=..., baseline=...)`; do not invoke collection internals. |
@@ -49,7 +51,8 @@ store is introduced.
 | `get_session(database, session)` | `SessionView` | Read-only consistent snapshot; unknown session raises `NotFoundError`. |
 | `get_timeline(database, *, through=None)` | `tuple[TimelineEvent, ...]` | Read-only global event order. |
 | `get_claims(database, *, through=None, topic=None)` | `tuple[ClaimView, ...]` | Read-only, derived claim status at the cutoff. |
-| `check_integrity(database)` | `IntegrityResult(ok, schema_version, errors)` | Read-only; false `ok` reports observed inconsistencies. |
+| `check_integrity(database, *, anchor=None)` | `IntegrityResult(ok, schema_version, errors, first_broken_sequence)` | Read-only; false `ok` reports observed inconsistencies. |
+| `get_chain_head(database)` | `ChainHead(sequence, digest)` | Read-only; exports the receipt chain head for safekeeping outside the database. |
 
 `through` is an inclusive, nonnegative SQLite sequence number (maximum
 `2**63 - 1`); booleans and coercible strings are rejected. Omitting it means the
@@ -88,7 +91,8 @@ The public Pydantic result models are frozen and their collections are tuples:
 - Derived views: `SessionView` combines canonical projections and lifecycle status;
   `ClaimView` adds `active`, `superseded`, `contested` or `retracted` status to a claim.
   `EvidenceLinkView` and `ClaimRelationView` expose attributed relations and local order.
-- Diagnostic result: `IntegrityResult` reports local consistency, not authority.
+- Diagnostic results: `IntegrityResult` reports local consistency, not authority;
+  `ChainHead` is the receipt chain's latest position and digest.
 
 `SessionView` exposes `session`, `status`, `sources`, `observations`, `evidence`,
 `claims`, `artifacts`, `failures`, and `events`. Its claims are original records;
@@ -144,6 +148,36 @@ inspection cannot proceed. It never upgrades authority, authenticates identity,
 or proves the truth of a claim. Other read operations do not implicitly perform
 a full integrity scan.
 
+`first_broken_sequence` is the stored sequence of the first receipt, in chain
+order, that fails continuity, linkage, identity or digest verification: the point
+where the local chain stops being trustworthy. It is `None` when the chain is
+intact or when findings have no receipt position (for example `record_coverage`,
+`foreign_keys` or relationship findings).
+
+## Chain anchoring
+
+The receipt chain alone proves internal consistency, not history: a party able to
+rewrite the database file can edit records and recompute every receipt, or roll
+the file back to an older consistent state, and `check_integrity` cannot tell.
+Anchoring closes that gap up to the moment an anchor was taken.
+
+`get_chain_head` returns `ChainHead(sequence, digest)` for the last receipt; an
+empty chain returns sequence `0` and the all-zero genesis digest. It only reads
+and does not verify the chain, so check integrity before trusting a head. Store
+the head somewhere the database writer cannot rewrite, such as a transparency
+log, a timestamping service, a signed commit or a separate operator. BlackBox
+deliberately contains no anchoring backend.
+
+`check_integrity(database, anchor=head.model_dump())` accepts that mapping
+(`sequence`, `digest`; the anchor is input, so pass a mapping, not the result
+object). Each receipt digest covers the previous one, so a matching digest at
+the anchored sequence pins every receipt up to it. Two findings are added:
+`anchor_mismatch` (the receipt at that sequence has a different digest: history
+up to the anchor was rewritten) and `anchor_missing` (the chain no longer reaches
+that sequence: records were truncated or the file was rolled back). An anchor
+proves nothing about records appended after it; take anchors regularly. Invalid
+anchors raise `ValidationError` before the database is opened.
+
 ## Example consumer
 
 ```python
@@ -170,7 +204,10 @@ assert result.ok
 Existing successful JSON shapes remain unchanged; `claim --relation` also accepts
 `retracts`. New evidence-link operations are exposed through the Python API. `init` still
 prints only `status`; `claim` prints `claim_id`; `check` prints `ok`,
-`schema_version`, `errors`. Exit codes remain 0 for success, 1 for operation or
+`schema_version`, `errors` and, since 0.5.0, `first_broken_sequence`. `head`
+prints `sequence` and `digest`; `check --anchor FILE` reads that JSON back, so
+`blackbox head > anchor.json` round-trips. An invalid anchor prints the bounded
+`invalid_input` error rather than a check envelope. Exit codes remain 0 for success, 1 for operation or
 integrity failure, and 2 for argparse usage errors. Operation failures now expose
 bounded `error` and `retryable` fields. Input-file read/decode failures report
 `input_unavailable_or_invalid`. `check` retains its result envelope for errors,
@@ -179,8 +216,9 @@ including `schema_integrity`, `sqlite_integrity` and `database_unavailable`.
 CI installs the built wheel into a disposable environment and executes a copied
 external consumer in isolated Python mode, outside the checkout. That consumer
 uses only public imports for initialize, capture, append claim, reconstruction,
-timeline, claims, attributed evidence links, cross-session retraction and
-integrity. CLI smoke checks against the same installed wheel run `--help`,
-`init`, two `capture`s, a cross-session `claim --relation retracts`, `claims`
-and `check`; evidence links have no CLI command. Released-v1 and
+timeline, claims, attributed evidence links, cross-session retraction,
+integrity and chain-head anchoring. CLI smoke checks against the same installed
+wheel run `--help`, `init`, two `capture`s, a cross-session `claim --relation
+retracts`, `claims`, `check`, `head` and `check --anchor`; evidence links have
+no CLI command. Released-v1 and
 released-v2 migration/rollback tests remain in the full suite.

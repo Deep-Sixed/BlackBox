@@ -28,7 +28,14 @@ uv sync --frozen --python 3.14.5
 uv run blackbox --database ./blackbox.sqlite3 init
 uv run blackbox --database ./blackbox.sqlite3 capture --input capture.json --repo .
 uv run blackbox --database ./blackbox.sqlite3 check
+uv run blackbox --database ./blackbox.sqlite3 head > anchor.json
+uv run blackbox --database ./blackbox.sqlite3 check --anchor anchor.json
 ```
+
+The receipt chain alone cannot detect a rewrite by someone who controls the
+database file. Store `head` output somewhere that writer cannot change, then
+`check --anchor` detects rewrites or truncation up to that point; see
+[chain anchoring](docs/public-api.md#chain-anchoring).
 
 The database file is created with `0600` permissions, uses SQLite WAL mode, and
 rejects unknown schema identities. `storage/`, `spool/`, local databases,
@@ -47,9 +54,9 @@ upgrades from supported older schemas, and integrity-check semantics. Run `black
 
 ## Python integration
 
-BlackBox 0.4.1 exposes supported operations and typed results through `import
+BlackBox 0.5.0 exposes supported operations and typed results through `import
 blackbox`. Use `initialize`, `capture`, `append_claim`, `get_session`,
 `get_timeline`, `get_claims`, `link_evidence`, `get_evidence_links`,
-`get_claim_relations`, and `check_integrity`. See the
+`get_claim_relations`, `check_integrity`, and `get_chain_head`. See the
 [public API contract](docs/public-api.md) for input mappings, result types,
 bounded errors, retry behavior and migration ownership. Schema v3 adds [attributed evidence links and cross-session claim relations](docs/trace-relationships.md).

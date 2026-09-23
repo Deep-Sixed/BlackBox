@@ -4,6 +4,7 @@ from .api import (
     append_claim,
     capture,
     check_integrity,
+    get_chain_head,
     get_claim_relations,
     get_claims,
     get_evidence_links,
@@ -29,6 +30,7 @@ from .results import (
     ArtifactRecord,
     CallerObservation,
     CaptureResult,
+    ChainHead,
     ClaimRecord,
     ClaimRelationView,
     ClaimResult,
@@ -47,13 +49,14 @@ from .results import (
     TimelineEvent,
 )
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 __all__ = [
     "ArtifactRecord",
     "BlackBoxError",
     "BusyError",
     "CallerObservation",
     "CaptureResult",
+    "ChainHead",
     "ClaimRecord",
     "ClaimRelationView",
     "ClaimResult",
@@ -83,6 +86,7 @@ __all__ = [
     "append_claim",
     "capture",
     "check_integrity",
+    "get_chain_head",
     "get_claim_relations",
     "get_claims",
     "get_evidence_links",
