@@ -8,9 +8,11 @@ from .._signals import EvidenceIssue, SchemaIssue
 from ..models import canonical
 from . import v001, v002, v003, v004
 
-DEFINITIONS = {1: v001.DDL, 2: v002.DDL, 3: v003.DDL, 4: v004.DDL}
-UPGRADES = {1: v002.upgrade, 2: v003.upgrade, 3: v004.upgrade}
-CURRENT = 4
+VERSIONS = (v001, v002, v003, v004)
+DEFINITIONS = {module.VERSION: module.DDL for module in VERSIONS}
+# UPGRADES[n] moves a version n database to version n + 1.
+UPGRADES = {module.VERSION - 1: module.upgrade for module in VERSIONS[1:]}
+CURRENT = VERSIONS[-1].VERSION
 
 
 def schema_digest(version=CURRENT):
@@ -71,6 +73,18 @@ def validate(connection, version):
             raise SchemaIssue("invalid migration history")
 
 
+def _record(connection, version, previous_version, timestamp):
+    digest = schema_digest(version)
+    connection.execute(
+        "INSERT INTO schema_metadata VALUES (?,?,?)", (version, timestamp, digest)
+    )
+    connection.execute(
+        "INSERT INTO schema_migrations VALUES (?,?,?,?)",
+        (version, previous_version, digest, timestamp),
+    )
+    connection.execute(f"PRAGMA user_version={version}")
+
+
 def install(connection, timestamp):
     if not connection.in_transaction:
         raise SchemaIssue("migration requires a transaction")
@@ -81,16 +95,8 @@ def install(connection, timestamp):
             raise SchemaIssue("refusing to adopt a non-BlackBox database")
         for statement in DEFINITIONS[CURRENT]:
             connection.execute(statement)
-        connection.execute(
-            "INSERT INTO schema_metadata VALUES (?,?,?)",
-            (CURRENT, timestamp, schema_digest()),
-        )
-        connection.execute(
-            "INSERT INTO schema_migrations VALUES (?,?,?,?)",
-            (CURRENT, 0, schema_digest(), timestamp),
-        )
         connection.execute(f"PRAGMA application_id={v001.APPLICATION_ID}")
-        connection.execute(f"PRAGMA user_version={CURRENT}")
+        _record(connection, CURRENT, 0, timestamp)
     else:
         if application != v001.APPLICATION_ID:
             raise SchemaIssue("unsupported database identity or schema version")
@@ -104,15 +110,6 @@ def install(connection, timestamp):
                 raise EvidenceIssue("invalid source evidence")
         while version < CURRENT:
             UPGRADES[version](connection)
-            next_version = version + 1
-            connection.execute(
-                "INSERT INTO schema_metadata VALUES (?,?,?)",
-                (next_version, timestamp, schema_digest(next_version)),
-            )
-            connection.execute(
-                "INSERT INTO schema_migrations VALUES (?,?,?,?)",
-                (next_version, version, schema_digest(next_version), timestamp),
-            )
-            connection.execute(f"PRAGMA user_version={next_version}")
-            version = next_version
+            _record(connection, version + 1, version, timestamp)
+            version += 1
     validate(connection, CURRENT)

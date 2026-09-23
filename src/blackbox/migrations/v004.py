@@ -15,7 +15,7 @@ from . import v001, v003
 
 VERSION = 4
 TABLES = v003.TABLES
-V3_SOURCES = v001.DDL[2]
+V3_SOURCES = next(s for s in v001.DDL if s.startswith("CREATE TABLE sources ("))
 SOURCES = V3_SOURCES.replace(
     "CHECK(authority IN ('caller_asserted','local_git'))",
     "CHECK(authority IN ('caller_asserted','local_git','host_reported'))",

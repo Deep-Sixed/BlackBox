@@ -18,12 +18,7 @@ ADDITIONS = [
         previous_digest TEXT NOT NULL CHECK(length(previous_digest)=64),
         UNIQUE(record_type, record_id)) STRICT""",
 ]
-for table in TABLES[-2:]:
-    for operation in ("UPDATE", "DELETE"):
-        ADDITIONS.append(
-            f"CREATE TRIGGER {table}_no_{operation.lower()} BEFORE {operation} "
-            f"ON {table} BEGIN SELECT RAISE(ABORT, 'immutable history'); END"
-        )
+ADDITIONS += v001.immutability_triggers(TABLES[-2:])
 DDL = [*v001.DDL, *ADDITIONS]
 
 

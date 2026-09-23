@@ -2,7 +2,7 @@
 
 from .._signals import EvidenceIssue
 from ..models import identity
-from . import v002
+from . import v001, v002
 
 VERSION = 3
 TABLES = (*v002.TABLES, "claim_relations", "evidence_links")
@@ -29,12 +29,7 @@ ADDITIONS = [
               (artifact_id IS NOT NULL) = 1)) STRICT""",
     "CREATE INDEX evidence_links_claim ON evidence_links(claim_id)",
 ]
-for table in TABLES[-2:]:
-    for operation in ("UPDATE", "DELETE"):
-        ADDITIONS.append(
-            f"CREATE TRIGGER {table}_no_{operation.lower()} BEFORE {operation} "
-            f"ON {table} BEGIN SELECT RAISE(ABORT, 'immutable history'); END"
-        )
+ADDITIONS += v001.immutability_triggers(TABLES[-2:])
 DDL = [*v002.DDL, *ADDITIONS]
 
 
