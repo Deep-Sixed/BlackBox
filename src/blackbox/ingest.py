@@ -7,7 +7,13 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
-from ._signals import ClaimConflict, MissingRecord, ObservationIssue, RequestConflict
+from ._signals import (
+    ClaimConflict,
+    MissingRecord,
+    ObservationIssue,
+    ObservationRejected,
+    RequestConflict,
+)
 from .db import connect, now, transaction
 from .integrity import append_receipt
 from .models import Capture, Claim, EvidenceLink, canonical, identity
@@ -169,6 +175,8 @@ def ingest(
                 if repo is not None:
                     try:
                         data = collect_git(repo, baseline)
+                    except ObservationRejected:
+                        raise
                     except ValueError, OSError, subprocess.SubprocessError:
                         raise ObservationIssue(
                             "Git metadata collection failed"

@@ -120,11 +120,17 @@ retry contract.
 | `BusyError` (a ConflictError) | `database_busy` | true |
 | `NotFoundError` | `not_found` | false |
 | `ObservationError` | `observation_failed` | true |
+| `ObservationRejectedError` (an ObservationError) | `observation_rejected` | false; remediate the repository first |
 
 Busy means SQLite lock contention. Conflicting request reuse or a second
 superseding claim is a nonretryable conflict. An observer failure can be retried
 with the same request after the local observation problem is resolved; the existing
-durable reservation/failure history remains. BlackBox does not perform retry loops.
+durable reservation/failure history remains.
+When the Git observer's own metadata (a path or branch name) looks like a
+credential, capture raises `ObservationRejectedError`: an unchanged retry fails
+the same way, so rename or remove the offending path, then retry the same
+request. The session stays `FAILED_RETRYABLE` until then. BlackBox does not
+perform retry loops.
 False retryability means inspect/remediate, not that repair is impossible. Disk
 full, unavailable storage and corruption must not trigger blind automatic retries.
 

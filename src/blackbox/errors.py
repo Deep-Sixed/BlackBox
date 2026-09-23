@@ -45,3 +45,8 @@ class NotFoundError(BlackBoxError):
 class ObservationError(BlackBoxError):
     code = "observation_failed"
     retryable = True
+
+
+class ObservationRejectedError(ObservationError):
+    code = "observation_rejected"
+    retryable = False

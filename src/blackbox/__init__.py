@@ -21,6 +21,7 @@ from .errors import (
     MigrationRequiredError,
     NotFoundError,
     ObservationError,
+    ObservationRejectedError,
     SchemaError,
     ValidationError,
 )
@@ -71,6 +72,7 @@ __all__ = [
     "NotFoundError",
     "ObservationError",
     "ObservationRecord",
+    "ObservationRejectedError",
     "SchemaError",
     "SessionRecord",
     "SessionView",

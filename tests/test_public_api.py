@@ -205,6 +205,49 @@ def test_observer_failure_is_bounded_and_retryable(database, request_data, monke
     assert bb.check_integrity(database).ok
 
 
+def test_sensitive_git_metadata_needs_remediation_not_retry(
+    database, request_data, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "baseline",
+        ],
+        check=True,
+    )
+    leaked = repo / "api_key=synthetic-private-value.txt"
+    leaked.write_text("untracked")
+    with pytest.raises(bb.ObservationRejectedError) as caught:
+        bb.capture(database, request_data, repo=repo)
+    assert isinstance(caught.value, bb.ObservationError)
+    assert caught.value.code == "observation_rejected"
+    assert not caught.value.retryable
+    assert "synthetic-private-value" not in "".join(
+        traceback.format_exception(caught.value)
+    )
+    session = bb.get_timeline(database)[0].session_id
+    assert bb.get_session(database, session).status == "FAILED_RETRYABLE"
+    # An unchanged retry is rejected again; remediation makes the same request work.
+    with pytest.raises(bb.ObservationRejectedError):
+        bb.capture(database, request_data, repo=repo)
+    leaked.rename(repo / "renamed.txt")
+    assert bb.capture(database, request_data, repo=repo).status == "COMMITTED"
+    assert bb.check_integrity(database).ok
+
+
 def test_integrity_findings_are_typed_results(database, request_data):
     bb.capture(database, request_data)
     with sqlite3.connect(database) as connection:
