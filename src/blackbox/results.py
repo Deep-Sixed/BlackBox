@@ -82,11 +82,11 @@ class ClaimRecord(_Result):
     topic: str
     statement: str
     target_id: str | None
-    relation: Literal["supersedes", "contests"] | None
+    relation: Literal["supersedes", "contests", "retracts"] | None
 
 
 class ClaimView(ClaimRecord):
-    status: Literal["active", "superseded", "contested"]
+    status: Literal["active", "superseded", "contested", "retracted"]
 
 
 class ArtifactRecord(_Result):
@@ -131,3 +131,31 @@ class IntegrityResult(_Result):
     ok: bool
     schema_version: int | None
     errors: tuple[str, ...]
+
+
+class EvidenceLinkResult(_Result):
+    link_id: str
+
+
+class EvidenceLinkView(_Result):
+    id: str
+    claim_id: str
+    evidence_record_id: str
+    record_type: Literal["observation", "evidence", "artifact"]
+    relation: Literal["supports", "contradicts", "context"]
+    source_id: str
+    origin_session_id: str
+    recorded_at: str
+    sequence: int
+
+
+class ClaimRelationView(_Result):
+    id: str
+    claim_id: str
+    target_id: str
+    relation: Literal["supersedes", "contests", "retracts"]
+    source_id: str
+    origin_session_id: str
+    target_session_id: str
+    recorded_at: str
+    sequence: int

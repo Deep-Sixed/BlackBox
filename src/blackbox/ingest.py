@@ -10,7 +10,7 @@ from pathlib import Path
 from ._signals import ClaimConflict, MissingRecord, ObservationIssue, RequestConflict
 from .db import connect, now, transaction
 from .integrity import append_receipt
-from .models import Capture, Claim, canonical, identity
+from .models import Capture, Claim, EvidenceLink, canonical, identity
 from .provenance import collect_git
 
 LIFECYCLE = ("RESERVED", "COMMITTED", "FAILED_RETRYABLE")
@@ -88,14 +88,22 @@ def claim_row(
         row = connection.execute(
             "SELECT session_id FROM claims WHERE id=?", (target,)
         ).fetchone()
-        if row is None or row["session_id"] != session:
-            raise ValueError("correction target must belong to the session")
+        if row is None:
+            raise MissingRecord("unknown correction target")
     source_id = source(connection, session, claim.source, "caller_asserted")
     key = identity("clm", [session, claim.model_dump(), target, relation])
     try:
         cursor = connection.execute(
             "INSERT INTO claims VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
-            (key, session, source_id, claim.topic, claim.statement, target, relation),
+            (
+                key,
+                session,
+                source_id,
+                claim.topic,
+                claim.statement,
+                target if relation != "retracts" else None,
+                relation if relation != "retracts" else None,
+            ),
         )
     except sqlite3.IntegrityError as error:
         if (
@@ -106,7 +114,14 @@ def claim_row(
         raise
     if cursor.rowcount:
         append_receipt(connection, "claims", key)
-        event(connection, session, "CLAIM", key)
+        event_id = event(connection, session, "CLAIM", key)
+        if target is not None:
+            relation_id = identity("rel", [key, target, relation])
+            connection.execute(
+                "INSERT INTO claim_relations VALUES (?,?,?,?,?)",
+                (relation_id, key, target, relation, event_id),
+            )
+            append_receipt(connection, "claim_relations", relation_id)
     return key
 
 
@@ -228,6 +243,7 @@ def append_claim(
         None,
         "supersedes",
         "contests",
+        "retracts",
     ):
         raise ValueError("correction requires a target and supported relation")
     connection = connect(database)
@@ -239,5 +255,62 @@ def append_claim(
             if current != "COMMITTED":
                 raise RequestConflict("claim requires a committed session")
             return claim_row(connection, session, claim, target, relation)
+    finally:
+        connection.close()
+
+
+def link_evidence(database, session, link: EvidenceLink):
+    connection = connect(database)
+    try:
+        with transaction(connection):
+            current = state(connection, session)
+            if current is None:
+                raise MissingRecord("unknown session")
+            if current != "COMMITTED":
+                raise RequestConflict("link requires a committed session")
+            table = {
+                "observation": "observations",
+                "evidence": "evidence",
+                "artifact": "artifacts",
+            }[link.record_type]
+            for name, key in (
+                ("claims", link.claim_id),
+                (table, link.evidence_record_id),
+            ):
+                if (
+                    connection.execute(
+                        f"SELECT 1 FROM {name} WHERE id=?", (key,)
+                    ).fetchone()
+                    is None
+                ):
+                    raise MissingRecord("unknown link reference")
+            key = identity("link", [session, link.model_dump()])
+            if connection.execute(
+                "SELECT 1 FROM evidence_links WHERE id=?", (key,)
+            ).fetchone():
+                return key
+            source_id = source(connection, session, link.source, "caller_asserted")
+            event_id = event(connection, session, "EVIDENCE_LINK", key)
+            timestamp = connection.execute(
+                "SELECT recorded_at FROM events WHERE id=?", (event_id,)
+            ).fetchone()[0]
+            connection.execute(
+                "INSERT INTO evidence_links VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    key,
+                    session,
+                    source_id,
+                    link.claim_id,
+                    link.evidence_record_id
+                    if link.record_type == "observation"
+                    else None,
+                    link.evidence_record_id if link.record_type == "evidence" else None,
+                    link.evidence_record_id if link.record_type == "artifact" else None,
+                    link.relation,
+                    timestamp,
+                ),
+            )
+            append_receipt(connection, "evidence_links", key)
+            return key
     finally:
         connection.close()

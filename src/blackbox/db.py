@@ -77,7 +77,7 @@ def verify_schema(connection: sqlite3.Connection) -> None:
     if connection.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID:
         raise SchemaIssue("unsupported database identity or schema version")
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if version == 1:
+    if version in DEFINITIONS and version < VERSION:
         raise MigrationRequired(
             "schema migration required; use a writer initialization"
         )

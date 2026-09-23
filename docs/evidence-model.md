@@ -33,3 +33,11 @@ input remains `caller_asserted` and its evidence remains `unverified`.
 Derived views such as timelines, active claim status, reconstruction, and
 integrity checks are interpretations over immutable rows. They do not create new
 source records and do not change authority.
+
+
+A link saying evidence `supports`, `contradicts` or provides `context` for a claim
+is itself a caller-attributed assertion. BlackBox persists the link, source and
+origin session without judging the claim. A locally observed evidence target
+does not promote the linking source to observer authority. Cross-session
+supersede/contest/retract claims keep both origins and derive status without
+mutating originals. See [trace relationships](trace-relationships.md).

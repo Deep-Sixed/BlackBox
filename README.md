@@ -50,14 +50,14 @@ See [docs/evidence-model.md](docs/evidence-model.md) for the claim,
 observation, receipt, integrity, authority, verification and provenance
 vocabulary used by the native BlackBox contract.
 
-See [docs/sqlite-contract.md](docs/sqlite-contract.md) for schema v2, atomic
+See [docs/sqlite-contract.md](docs/sqlite-contract.md) for schema v3, atomic
 upgrades from `v0.1.0`, and integrity-check semantics. Run `blackbox --database
 ./blackbox.sqlite3 init` with writer access to upgrade before using read-only queries.
 
 ## Python integration
 
-BlackBox 0.3.0 exposes supported operations and typed results through `import
+BlackBox 0.4.0 exposes supported operations and typed results through `import
 blackbox`. Use `initialize`, `capture`, `append_claim`, `get_session`,
 `get_timeline`, `get_claims`, and `check_integrity`. See the
 [public API contract](docs/public-api.md) for input mappings, result types,
-bounded errors, retry behavior and migration ownership. Database schema remains v2.
+bounded errors, retry behavior and migration ownership. Schema v3 adds [attributed evidence links and cross-session claim relations](docs/trace-relationships.md).

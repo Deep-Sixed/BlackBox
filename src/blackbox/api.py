@@ -26,12 +26,15 @@ from .errors import (
     SchemaError,
     ValidationError,
 )
-from .integrity import evidence_errors, record_errors
-from .models import Capture, Claim, Identifier, safe_strings
+from .integrity import evidence_errors, record_errors, relationship_errors
+from .models import Capture, Claim, EvidenceLink, Identifier, safe_strings
 from .results import (
     CaptureResult,
+    ClaimRelationView,
     ClaimResult,
     ClaimView,
+    EvidenceLinkResult,
+    EvidenceLinkView,
     InitializationResult,
     IntegrityResult,
     SessionView,
@@ -43,10 +46,13 @@ __all__ = [
     "append_claim",
     "capture",
     "check_integrity",
+    "get_claim_relations",
     "get_claims",
+    "get_evidence_links",
     "get_session",
     "get_timeline",
     "initialize",
+    "link_evidence",
 ]
 
 
@@ -128,7 +134,7 @@ def _output(model, value):
 
 @_boundary
 def initialize(database: str | Path) -> InitializationResult:
-    """Create a v2 store or atomically migrate a supported older store."""
+    """Create a v3 store or atomically migrate a supported older store."""
     _db.connect(_path(database)).close()
     return InitializationResult(schema_version=VERSION)
 
@@ -176,6 +182,7 @@ def append_claim(
         None,
         "supersedes",
         "contests",
+        "retracts",
     ):
         raise ValidationError()
     key = _ingest.append_claim(
@@ -227,9 +234,72 @@ def check_integrity(database: str | Path) -> IntegrityResult:
     connection = _db.connect(_path(database), readonly=True)
     try:
         connection.execute("BEGIN")
-        errors = evidence_errors(connection) | record_errors(connection)
+        errors = (
+            evidence_errors(connection)
+            | record_errors(connection)
+            | relationship_errors(connection)
+        )
         return IntegrityResult(
             ok=not errors, schema_version=VERSION, errors=tuple(sorted(errors))
         )
     finally:
         connection.close()
+
+
+@_boundary
+def link_evidence(
+    database: str | Path, session: str, link: Mapping[str, object]
+) -> EvidenceLinkResult:
+    """Record an attributed assertion about existing evidence; never adjudicate it."""
+    path = _path(database)
+    origin = _identifier(session)
+    validated = _input(EvidenceLink, link)
+    return EvidenceLinkResult(link_id=_ingest.link_evidence(path, origin, validated))
+
+
+@_boundary
+def get_evidence_links(
+    database: str | Path,
+    *,
+    claim_id: str | None = None,
+    session: str | None = None,
+    through: int | None = None,
+) -> tuple[EvidenceLinkView, ...]:
+    """Read evidence assertions, filtered by claim, origin session or local order."""
+    for value in (claim_id, session):
+        if value is not None:
+            _identifier(value)
+    return tuple(
+        _output(EvidenceLinkView, row)
+        for row in _query.evidence_links(
+            _path(database),
+            claim_id=claim_id,
+            session=session,
+            through=_through(through),
+        )
+    )
+
+
+@_boundary
+def get_claim_relations(
+    database: str | Path,
+    *,
+    claim_id: str | None = None,
+    target_id: str | None = None,
+    session: str | None = None,
+    through: int | None = None,
+) -> tuple[ClaimRelationView, ...]:
+    """Read immutable newer-to-older assertions with both originating sessions."""
+    for value in (claim_id, target_id, session):
+        if value is not None:
+            _identifier(value)
+    return tuple(
+        _output(ClaimRelationView, row)
+        for row in _query.claim_relations(
+            _path(database),
+            claim_id=claim_id,
+            target_id=target_id,
+            session=session,
+            through=_through(through),
+        )
+    )

@@ -39,7 +39,7 @@ def main() -> int:
     claim.add_argument("session")
     claim.add_argument("--input", type=Path, required=True)
     claim.add_argument("--target")
-    claim.add_argument("--relation", choices=("supersedes", "contests"))
+    claim.add_argument("--relation", choices=("supersedes", "contests", "retracts"))
     args = parser.parse_args()
     try:
         match args.command:

@@ -190,21 +190,26 @@ def test_read_only_handle_and_foreign_keys(database, capture_request):
     assert len(claims(database)) == 1
 
 
-def test_corrections_cannot_cross_sessions(database, capture_request):
+def test_corrections_preserve_both_originating_sessions(database, capture_request):
     first = ingest(database, capture_request)["session_id"]
     target = claims(database)[0]["id"]
-    second_request = {**capture_request, "request_id": "test-002"}
-    second = ingest(database, second_request)["session_id"]
-    with pytest.raises(ValueError, match="correction target"):
-        append_claim(
-            database,
-            second,
-            second_request["claims"][0],
-            target=target,
-            relation="contests",
-        )
-    assert len(claims(database)) == 2
-    assert reconstruct(database, first)["status"] == "COMMITTED"
+    before = reconstruct(database, first)
+    second = ingest(database, {**capture_request, "request_id": "test-002"})[
+        "session_id"
+    ]
+    key = append_claim(
+        database,
+        second,
+        capture_request["claims"][0],
+        target=target,
+        relation="contests",
+    )
+    assert len(claims(database)) == 3
+    assert reconstruct(database, first) == before
+    assert next(c for c in claims(database) if c["id"] == key)["session_id"] == second
+    assert (
+        next(c for c in claims(database) if c["id"] == target)["status"] == "contested"
+    )
 
 
 def test_failed_capture_retries_atomically(database, capture_request, monkeypatch):

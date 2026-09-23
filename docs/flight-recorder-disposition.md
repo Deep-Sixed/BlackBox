@@ -1,9 +1,9 @@
-# Flight Recorder capability disposition — PR #4 working inventory
+# Flight Recorder capability disposition — PR #4 disposition
 
-**Status: parity closure blocked on the Ledger semantic decisions below.**
+**Status: core semantic disposition resolved for package 0.4.0 / schema v3.**
 This inventory is not a retirement authorization, a claim of production parity,
 or a statement that the migration is complete. No donor or EVECOR runtime changes
-are made here. The supported BlackBox baseline is `v0.3.0`, schema v2.
+are made here. The reviewed starting baseline is `v0.3.0`, schema v2.
 
 ## Scope and evidence
 
@@ -23,25 +23,23 @@ read or publish operational claim/spool contents, execute donor writes, or asser
 which deployment units are currently active. Whole-EVECOR caller discovery and
 runtime verification remain WP #5; a file inventory cannot substitute for them.
 
-## Decisions blocking closure
+## Approved semantic disposition
 
-These are identified differences, not permission to silently discard behavior.
-They affect the newly frozen public contract and potentially stored schema.
+The operator approved the narrowed [relationship contract](trace-relationships.md):
+`actor assertion != observer observation != BlackBox persistence`.
 
-| Gap | Donor evidence | BlackBox v0.3.0 limitation | Decision needed |
-| --- | --- | --- | --- |
-| G1: claim-specific evidence linkage | `ledger.models.SourceRef`, `mcp_server.SourceInput`, `_build_claim`, `validate_claims` | A claim has a source identity but no list of evidence refs/locators/digests. Session artifacts do not establish which artifact supports which claim. Quotes are not metadata-only. | Choose a native bounded evidence-link contract, or explicitly retire/externally own the richer semantics. Do not present session artifacts as equivalent. |
-| G2: correction across sessions | `ledger.repository.supersede`, `contest_linked` operate on global claim IDs without session scope | `ingest.claim_row` rejects a target belonging to another session. Recording a later correction inside the old session loses the real originating-session association. | Approve cross-session relationships or explicitly accept the restriction; no adapter workaround pretending the old session originated the correction. |
-| G3: effective-time validity | `ClaimRecord.valid_on`, `search_claims(as_of)`, `build_timeline(as_of)` | `through` is a recording-event cutoff, not the donor's effective-date `[valid_from, valid_until)` window. | Decide whether effective validity is required native evidence metadata or belongs to a separate knowledge consumer. |
-| G4: retrieval semantics | `ledger.search` implements BM25 over statements, sources and notes; MCP exposes query/topic/as_of/limit | Public `get_claims` supports topic and recording cutoff, not text ranking, result limits or effective-date search. | Assign search to the consumer/adapter or specify the native retrieval requirement; topic filtering alone is not parity. |
-| G5: claim taxonomy/context | `ClaimRecord` and MCP input expose type, confidence, notes, general relations and retracted state | Native claims contain topic/statement/source plus supersedes/contests; no confidence/type/effective metadata/general relation graph. | Explicitly classify retained metadata versus knowledge/governance semantics. Never derive observer authority from confidence. |
+| Gap | Donor responsibility | Final disposition in PR #4 |
+| --- | --- | --- |
+| G1 | Claim-specific source/evidence references (`SourceRef`, `_build_claim`, validation) | NATIVE BLACKBOX: bounded `supports`, `contradicts`, `context` links to canonical observation/evidence/artifact IDs, with asserting source and true origin. Quotes and raw payloads are not imported. Semantic support is the source's assertion. |
+| G2 | Global correction/contest IDs (`supersede`, `contest_linked`) | NATIVE BLACKBOX: immutable cross-session supersedes/contests/retracts, both origins preserved. No adapter writes into the old session to impersonate its origin. |
+| G3 | Effective validity windows (`valid_on`, search/timeline `as_of`) | OBSOLETE in BlackBox core. Recording cutoff remains distinct from knowledge validity. Timestamp means local recording time; sequence means local persistence order, not distributed causality. No invented observer clocks. |
+| G4 | BM25 statement/source/note retrieval | DOWNSTREAM / HISTORIAN responsibility. Core supplies structured queries; relevance/semantic ranking is not declared equivalent or ported. |
+| G5 | Types, confidence, generic notes, general relations and mutable state | Retain attribution/provenance and bounded relation kinds. Retire generic notes, effective knowledge metadata and mutable statuses; no new claim-kind taxonomy without a requirement. Confidence never confers BlackBox authority. Derived statuses describe recorded assertions, not adjudicated truth. |
 
-Recommended direction for review: retain bounded provenance links and real
-cross-session correction provenance natively; keep transport identity, environment
-path resolution, presentation and relevance ranking outside core. Effective-time
-validity and richer claim metadata require an explicit contract choice. Until
-these decisions are made, G1–G5 are **REQUIRED / MISSING — disposition pending**,
-not obsolete. No schema or release bump is made merely to publish this inventory.
+Tool/process executions are the first future independent observer boundary.
+This PR implements no observer runtime or Actor/Observer/Evaluation/Trace tables.
+There are no remaining required/missing core gaps in this inventoried scope;
+adapter, runtime shadow and retirement work remains explicitly separate.
 
 ## Capability matrix
 
@@ -54,15 +52,15 @@ an outstanding WP #5 deliverable, not a claim that it already exists.
 | Canonical record reconstruction — `session_record.build_record`, `validate_record`, `write_session_artifacts` | NATIVE BLACKBOX | Typed capture, canonical SQLite rows and `get_session`; no parallel Markdown/JSON/sha sidecar store. |
 | Git branch, commit, changed paths — `collect_git_evidence`, `finalize.collect_git_receipts` | NATIVE BLACKBOX | Built-in Git observer records committed, staged, unstaged and untracked deltas separately, including dirty/untracked state when a baseline is supplied. Raw command stdout/stderr is intentionally not retained. |
 | Commands/tests/activity metadata — Recon claim and verified arrays | NATIVE BLACKBOX | Bounded observations carry name, kind, exit code, duration and optional digest. Caller data stays unverified. Self-hashed caller receipts do not become observer authority. |
-| Claim/observation separation and receipt verification — `make_evidence_receipt`, `verify_evidence_receipt` | NATIVE BLACKBOX | Caller/local-Git authority and verification classifications; v2 checks all canonical record receipts and chain continuity. Hash integrity is not observer identity. |
-| Artifact references — Recon `artifacts_written` | NATIVE BLACKBOX | Session artifact path/digest references with unverified classification. This does not close G1. |
+| Claim/observation separation and receipt verification — `make_evidence_receipt`, `verify_evidence_receipt` | NATIVE BLACKBOX | Caller/local-Git authority and verification classifications; schema v3 checks all canonical record receipts and chain continuity. Hash integrity is not observer identity. |
+| Artifact references — Recon `artifacts_written` | NATIVE BLACKBOX | Session artifact path/digest references with unverified classification. G1 is separately closed by attributed claim-specific links. |
 | Failed capture/retry/restart — Recon multi-file reservation cleanup | NATIVE BLACKBOX | Durable RESERVED, atomic capture, FAILED_RETRYABLE, idempotent retry; no multi-file repair procedure. |
 | Blockers/deferred work/risks/session narrative — Recon arrays | NATIVE BLACKBOX | Bounded topic/statement claims can record these caller assertions; adapter defines event-to-topic mapping. Arbitrary nested payloads are not accepted. |
 | Secret handling — Recon `redact_value` | NATIVE BLACKBOX | Strict metadata allowlist and sensitive-shaped input rejection before persistence replace arbitrary-payload redaction. No generic raw result storage. |
-| Append claims and local correction/contest chronology — Ledger repository/timeline | NATIVE BLACKBOX | New linked records, immutable originals, derived status and recording-sequence snapshots. Cross-session and effective-time distinctions remain G2/G3. |
+| Append claims and local correction/contest chronology — Ledger repository/timeline | NATIVE BLACKBOX | New linked records, immutable originals, derived status and recording-sequence snapshots. Cross-session relations are retained; effective-time knowledge validity is retired (G2/G3). |
 | Duplicate ID rejection — Ledger `_claim_id_exists` | NATIVE BLACKBOX | Database primary/unique keys and deterministic identity replace full directory scans. Caller-assigned legacy IDs are not accepted as canonical IDs. |
 | Consistency checking — Ledger `validate_claims`, CLI `check` | NATIVE BLACKBOX | SQLite/foreign-key/schema/receipt checks and single-transaction writes; no mutable reciprocal status fields. Donor source-path existence audit is separate, below. |
-| Claim evidence/type/time/text retrieval — Ledger models/search/MCP | REQUIRED / MISSING | G1–G5; no blanket declaration of parity. |
+| Claim evidence/type/time/text retrieval — Ledger models/search/MCP | DISPOSITIONED above | G1/G2 native; G3/G5 narrowed or retired; G4 downstream. This is deliberate refraction, not wholesale behavior compatibility. |
 | CPEX request identity and passive observation transport — `ledger.gateway`, `recon.gateway` | EVECOR ADAPTER RESPONSIBILITY | Sanitize and translate envelopes through the public API. Decide lossless supported identity/correlation mapping before shadow acceptance. Gateway best-effort success after failed persistence must not become a durability claim. |
 | MCP tools and request-context attribution — `ledger.mcp_server`, `recall.mcp_server` | EVECOR ADAPTER RESPONSIBILITY | Federation, authentication, tool schemas and remote identity stay outside core. Existing governance gates are not bypassed by direct SQLite access. |
 | Stop hook finalization and repository selection — `recon.finalize` | EVECOR ADAPTER RESPONSIBILITY | Hook transport, surface/model/session mapping, non-Git skip behavior and startup ownership. Built-in collection remains native. |
@@ -84,8 +82,7 @@ an outstanding WP #5 deliverable, not a claim that it already exists.
 ## Preserved four-file Ledger patch: final mechanism disposition
 
 The full patch remains privately preserved, but its changes are no longer an
-unclassified migration artifact. Closure of these remediation goals does not
-resolve the separate donor model gaps G1–G5.
+unclassified migration artifact. These remediation goals and the separate donor model gaps G1–G5 now have explicit dispositions.
 
 | File / change | Disposition and evidence |
 | --- | --- |
@@ -128,9 +125,16 @@ single-successor behavior. Existing tests cover request identity, Git state,
 artifacts, authority, failure/restart and receipt corruption. These are semantic
 contract tests, not a claim of byte-level or runtime shadow parity with the donor.
 
-No supported runtime behavior changes in this draft; package stays 0.3.0. Decide
-release numbering only when the approved gap resolution is implemented. PR #4
-must remain draft until G1–G5 have explicit retained/retired/externally-owned
-answers and retained missing capabilities have passing tests. Then WP #5 still
-needs whole-EVECOR discovery, shadow evidence, cutover and rollback proof. Flight
-Recorder is not retired by this document and migration is not complete.
+Package 0.4.0 / schema v3 implements G1/G2 through the supported Python API.
+`tests/test_relationships.py` covers attribution, both originating sessions,
+recording cutoffs, idempotency, conflicts, rollback/retry, immutable rows, tamper
+checking and reader/writer concurrency. `tests/test_v3_migration.py` uses the real
+released v0.3.0 implementation to establish old-store fixtures, unchanged canonical
+rows/receipt prefix and rollback readable by that release. The existing v1 path
+is tested through both upgrades. Installed-wheel consumer smoke includes the new
+operations without private imports.
+
+PR #4 stops at review after its local and CI gates. No v0.4.0 tag is created here.
+WP #5 still needs whole-EVECOR caller discovery, adapter implementation, shadow
+evidence, cutover and rollback proof. Flight Recorder is not retired by this
+document and deployment migration is not complete.

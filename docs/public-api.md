@@ -1,13 +1,14 @@
-# Supported public API — BlackBox 0.3.0
+# Supported public API — BlackBox 0.4.0
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
-The seven operations are also explicitly exported by `blackbox.api`.
+The ten operations are also explicitly exported by `blackbox.api`.
 Other submodules are implementation details even when Python makes them
 accessible as package attributes. Do not depend on raw connections, migration
 functions, row dictionaries or private helpers. The wheel includes `py.typed`.
 
-Package 0.3.0 establishes this contract; the database remains schema v2.
+Package 0.3.0 established the public boundary. Package 0.4.0 adds attributed
+relationships and schema v3; see [relationship semantics](trace-relationships.md).
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -38,9 +39,12 @@ store is introduced.
 
 | Operation | Return | Storage access |
 | --- | --- | --- |
-| `initialize(database)` | `InitializationResult(status="initialized", schema_version=2)` | Writer; creates or migrates. Idempotent. |
+| `initialize(database)` | `InitializationResult(status="initialized", schema_version=3)` | Writer; creates or migrates. Idempotent. |
 | `capture(database, request, *, repo=None, baseline=None)` | `CaptureResult(session_id, status, duplicate)` | Writer; creates/migrates as needed, reserves and captures using existing transactions. |
 | `append_claim(database, session, claim, *, target=None, relation=None)` | `ClaimResult(claim_id)` | Writer; may initialize/migrate, then requires an existing committed session. |
+| `link_evidence(database, session, link)` | `EvidenceLinkResult(link_id)` | Writer; requires committed origin and existing references. |
+| `get_evidence_links(database, *, claim_id=None, session=None, through=None)` | `tuple[EvidenceLinkView, ...]` | Read-only, attributed evidence assertions. |
+| `get_claim_relations(database, *, claim_id=None, target_id=None, session=None, through=None)` | `tuple[ClaimRelationView, ...]` | Read-only, newer-to-older relations with both sessions. |
 | `get_session(database, session)` | `SessionView` | Read-only consistent snapshot; unknown session raises `NotFoundError`. |
 | `get_timeline(database, *, through=None)` | `tuple[TimelineEvent, ...]` | Read-only global event order. |
 | `get_claims(database, *, through=None, topic=None)` | `tuple[ClaimView, ...]` | Read-only, derived claim status at the cutoff. |
@@ -52,12 +56,12 @@ current snapshot. Timeline and claim-query results are ordered by event sequence
 Session component collections are ordered by canonical ID except events, which
 are chronological. `topic` uses the input identifier grammar.
 
-Reader operations never create or migrate a database. A recognized v1 database
+Reader operations never create or migrate a database. A recognized v1 or v2 database
 raises `MigrationRequiredError`; call `initialize` with writer access, then retry
 the read. Capture and claim writes retain automatic writer initialization for
 CLI compatibility. Deployments can call `initialize` at startup to own this
 transition explicitly. Missing/unopenable database files raise `DatabaseError`;
-`NotFoundError` refers to an absent session in a valid database.
+`NotFoundError` refers to an absent session, correction target or evidence-link reference in a valid database.
 
 ## Inputs, stored records and views
 
@@ -73,14 +77,16 @@ operation boundary. A baseline must be a full Git commit hash and requires `repo
 
 The public Pydantic result models are frozen and their collections are tuples:
 
-- Operation results: `InitializationResult`, `CaptureResult`, `ClaimResult`.
+- Operation results: `InitializationResult`, `CaptureResult`, `ClaimResult`,
+  `EvidenceLinkResult`.
 - Canonical record projections: `SessionRecord`, `SourceRecord`,
   `ObservationRecord`, `EvidenceRecord`, `ClaimRecord`, `ArtifactRecord`,
   `FailureRecord`, `TimelineEvent`. These are detached copies, not writable rows.
 - Typed observation data: `CallerObservation` and `GitObservation`. Their fields
   retain the existing caller/local observer distinction.
 - Derived views: `SessionView` combines canonical projections and lifecycle status;
-  `ClaimView` adds `active`, `superseded` or `contested` status to a claim.
+  `ClaimView` adds `active`, `superseded`, `contested` or `retracted` status to a claim.
+  `EvidenceLinkView` and `ClaimRelationView` expose attributed relations and local order.
 - Diagnostic result: `IntegrityResult` reports local consistency, not authority.
 
 `SessionView` exposes `session`, `status`, `sources`, `observations`, `evidence`,
@@ -152,7 +158,8 @@ assert result.ok
 
 ## CLI and installed-package verification
 
-Commands, arguments and successful JSON shapes remain unchanged. `init` still
+Existing successful JSON shapes remain unchanged; `claim --relation` also accepts
+`retracts`. New evidence-link operations are exposed through the Python API. `init` still
 prints only `status`; `claim` prints `claim_id`; `check` prints `ok`,
 `schema_version`, `errors`. Exit codes remain 0 for success, 1 for operation or
 integrity failure, and 2 for argparse usage errors. Operation failures now expose
@@ -164,4 +171,5 @@ CI installs the built wheel into a disposable environment and executes a copied
 external consumer in isolated Python mode, outside the checkout. That consumer
 uses only public imports for initialize, capture, append claim, reconstruction,
 timeline, claims and integrity. CLI smoke checks run against the same installed
-wheel. Released-v1 migration/rollback tests remain in the full suite.
+wheel, including attributed links and cross-session retractions. Released-v1 and
+released-v2 migration/rollback tests remain in the full suite.

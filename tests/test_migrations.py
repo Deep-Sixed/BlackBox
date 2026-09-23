@@ -17,7 +17,7 @@ def test_real_release_upgrade_preserves_every_canonical_field(v1_database, relea
     connect(v1_database).close()
     for original in released_v1[1]["records"]:
         assert reconstruct(v1_database, original["session"]["id"]) == original
-    assert integrity(v1_database) == {"ok": True, "schema_version": 2, "errors": []}
+    assert integrity(v1_database) == {"ok": True, "schema_version": 3, "errors": []}
     with sqlite3.connect(v1_database) as db:
         assert (
             db.execute("SELECT * FROM schema_metadata WHERE version=1").fetchall()
@@ -25,7 +25,7 @@ def test_real_release_upgrade_preserves_every_canonical_field(v1_database, relea
         )
         assert db.execute(
             "SELECT version,previous_version FROM schema_migrations"
-        ).fetchall() == [(2, 1)]
+        ).fetchall() == [(2, 1), (3, 2)]
         before = db.execute("SELECT * FROM record_receipts").fetchall()
     connect(v1_database).close()
     with sqlite3.connect(v1_database) as db:
@@ -91,7 +91,7 @@ def test_readonly_old_schema_never_migrates(v1_database):
         assert db.execute("PRAGMA user_version").fetchone()[0] == 1
 
 
-@pytest.mark.parametrize("version", [0, -1, 3, 999])
+@pytest.mark.parametrize("version", [0, -1, 4, 999])
 def test_unknown_version_rejected(v1_database, version):
     with sqlite3.connect(v1_database) as db:
         db.execute(f"PRAGMA user_version={version}")
@@ -135,22 +135,23 @@ def test_concurrent_migration_is_once(v1_database):
         list(pool.map(open_writer, range(4)))
     assert integrity(v1_database)["ok"]
     with sqlite3.connect(v1_database) as db:
-        assert db.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 1
+        assert db.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 2
 
 
-def test_fresh_v2_skips_upgrade(tmp_path, monkeypatch):
+def test_fresh_v3_skips_upgrade(tmp_path, monkeypatch):
     def forbidden(_):
         raise AssertionError("fresh creation must not upgrade")
 
     monkeypatch.setitem(migrations.UPGRADES, 1, forbidden)
+    monkeypatch.setitem(migrations.UPGRADES, 2, forbidden)
     path = tmp_path / "fresh.sqlite3"
     connect(path).close()
     assert integrity(path)["ok"]
     with sqlite3.connect(path) as db:
-        assert db.execute("SELECT version FROM schema_metadata").fetchall() == [(2,)]
+        assert db.execute("SELECT version FROM schema_metadata").fetchall() == [(3,)]
         assert db.execute(
             "SELECT version,previous_version FROM schema_migrations"
-        ).fetchall() == [(2, 0)]
+        ).fetchall() == [(3, 0)]
 
 
 def test_extra_schema_object_not_hidden_by_internal_name_filter(v1_database):
@@ -164,9 +165,9 @@ def test_metadata_and_version_rollback_together(v1_database, monkeypatch):
     original = migrations.validate
 
     def reject_final(db, version):
-        if version == 2:
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 2
-            assert db.execute("SELECT count(*) FROM schema_metadata").fetchone()[0] == 2
+        if version == 3:
+            assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+            assert db.execute("SELECT count(*) FROM schema_metadata").fetchone()[0] == 3
             raise RuntimeError("final validation failure")
         original(db, version)
 

@@ -82,3 +82,11 @@ class Capture(StrictModel):
     artifacts: Annotated[list[Artifact], Field(max_length=1000)] = Field(
         default_factory=list
     )
+
+
+class EvidenceLink(StrictModel):
+    source: Identifier
+    claim_id: Identifier
+    record_type: Literal["observation", "evidence", "artifact"]
+    evidence_record_id: Identifier
+    relation: Literal["supports", "contradicts", "context"]
