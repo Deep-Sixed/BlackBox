@@ -9,22 +9,25 @@ part of published BlackBox history.
 
 ## Source and preserved extraction
 
-- Source repository: `/mnt/jarvis-data/projects/EVECOR`
+- Source repository: EVECOR
 - Source EVECOR commit: `d62c5cd7fe4f5fc3f561f382a2908bcd2c7e6b65`
 - Source subtree: `governance/flight-recorder`
 - Exact extracted Flight Recorder commit: `e6d71a211422ea222d6cbc27cb562ca7a8e9812b`
 - Exact extracted tree: `879a98172891776a53d7a4677ad149de2feb61f6`
 - Donor subtree tree at source commit: `879a98172891776a53d7a4677ad149de2feb61f6`
-- Private extraction clone:
-  `/mnt/jarvis-data/migration-backups/blackbox/20260922T070643Z/extraction`
+- Exact extraction clone: retained privately outside the repository.
 - Private bundle:
-  `/mnt/jarvis-data/migration-backups/blackbox/20260922T070643Z/exact-flight-recorder-and-local-work.bundle`
+  `exact-flight-recorder-and-local-work.bundle` (retained privately outside the repository)
 - Private bundle SHA-256:
   `490e9d917bd81d6c1690eaa4e043427e8531b79980b7ade38cb773126d6f9607`
 - Preserved Ledger working-state patch:
-  `/mnt/jarvis-data/migration-backups/blackbox/20260922T070643Z/flight-recorder-ledger-working.patch`
+  `flight-recorder-ledger-working.patch` (retained privately outside the repository)
 - Preserved Ledger working-state patch SHA-256:
   `f9bf68e44481088ddbb2b994a430379e8ba37df25c46cabb0514f736af04a91a`
+
+Machine-specific source and backup locations are intentionally omitted. The
+commit IDs, tree hashes, artifact names and digests identify the retained
+provenance; private backup locations are not public product paths.
 
 ## Excluded operational paths
 
