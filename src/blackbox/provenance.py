@@ -2,17 +2,34 @@
 
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 from pathlib import Path
 
 from .models import safe_strings
 
+# The observed repository's own config is controlled by the observed actor.
+# Command-line config outranks it: never run its fsmonitor hook, which executes
+# arbitrary programs and can report which paths git treats as unchanged.
+HARDENED_CONFIG = ("-c", "core.fsmonitor=false")
+
+
+def environment() -> dict[str, str]:
+    # Inherited GIT_* variables can redirect -C to another repository or index.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # Observation must not write the observed repository's index.
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
 
 def git(repo: Path, *args: str) -> bytes:
     result = subprocess.run(
-        ["git", "-C", str(repo), *args],
+        ["git", *HARDENED_CONFIG, "-C", str(repo), *args],
         capture_output=True,
         check=False,
+        env=environment(),
         timeout=15,
     )
     if result.returncode:
@@ -36,8 +53,6 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     before = None
     if baseline is not None:
         # Full object IDs only: no options, pathspecs, or moving symbolic refs.
-        import re
-
         if not re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", baseline):
             raise ValueError("baseline must be a full commit object ID")
         before = (
