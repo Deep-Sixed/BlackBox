@@ -31,6 +31,7 @@ beyond making tampering *detectable*, and then only in the ways listed below.
 | Reusing a request ID for different input | The session fingerprint binds the ID to its input | `ConflictError`; nothing is overwritten |
 | A caller claiming observer authority, for example by naming its source `blackbox.git` | Authority comes from the code path, not the name: caller input is always `caller_asserted`/`unverified` | cannot be expressed |
 | An observed repository running a `core.fsmonitor` hook, or redirecting the observer through inherited `GIT_*` variables | Git runs with `-c core.fsmonitor=false` and a scrubbed environment | not executed |
+| An observed repository running a clean filter, or hiding edits through a filter or an `assume-unchanged` flag | Git never reads the working tree for the observer: unstaged changes compare raw working-tree bytes with index blob IDs, ignoring `assume-unchanged` | not executed; edit reported |
 | Other local users reading or replacing the database file | Created `0600`; writers refuse wider permissions and symlinks | `DatabaseError` |
 | Secrets entering the store or leaking through errors | Inputs and observed Git metadata pass a credential-shape filter; public errors are fixed codes with no input, path or exception text | `ValidationError`, `ObservationRejectedError` |
 
@@ -54,13 +55,16 @@ ordinary text.
 - **Code running as the BlackBox user.** Such code can alter the database, the
   installed package, the `git` executable found on `PATH`, or the operator's
   global and system Git configuration. The Git observer trusts all of these.
-- **Repository-configured Git filters (known gap).** The Git observer disables
-  only `core.fsmonitor`. A repository can still configure a clean filter
-  (`filter.<driver>.clean` or `.process`, enabled through `.gitattributes` or
-  `.git/info/attributes`). Git runs that program while comparing modified
-  working-tree files, so an observed repository can still run code inside the
-  observer and influence which paths appear changed. This is reproduced and
-  tracked for a follow-up fix.
+- **Other repository configuration.** The Git observer still honours the
+  observed repository's config for the commands it runs (`rev-parse`, `branch`,
+  `ls-files`, `config` and tree/index diffs). None of these are known to run configured
+  programs or read working-tree file contents. A Git feature that does
+  would reopen this surface. Full isolation means running the observer in a
+  sandbox (see production gaps).
+- **Submodule contents.** A submodule counts as changed only when a different
+  commit is checked out. Uncommitted edits inside a submodule are not observed,
+  because inspecting them would mean running Git in that repository's working
+  tree.
 - **Wall-clock trust.** `recorded_at` is the local clock at write time. It is
   not attested and can move. `sequence` is local persistence order, not
   causality.

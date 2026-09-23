@@ -342,6 +342,128 @@ def test_observed_repository_config_cannot_run_or_blind_the_git_observer(
     assert result["unstaged_delta"] == result["working_tree_delta"] == ["tracked.txt"]
 
 
+def commit_all(git, message):
+    git("add", "-A")
+    git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        message,
+    )
+
+
+def test_unstaged_detection_matches_git_diff_without_filters(repo):
+    root, git = repo
+    for name in ("edited", "deleted", "chmod", "retargeted", "became-link", "same"):
+        (root / name).write_text(name + "\n")
+    (root / "new\nline").write_text("tracked name with a newline\n")
+    (root / "target").write_text("target\n")
+    (root / "link").symlink_to("same")
+    commit_all(git, "variety")
+    (root / "edited").write_text("changed\n")
+    (root / "deleted").unlink()
+    (root / "chmod").chmod(0o755)
+    (root / "link").unlink()
+    (root / "link").symlink_to("target")
+    (root / "became-link").unlink()
+    (root / "became-link").symlink_to("target")
+    (root / "new\nline").write_text("changed too\n")
+    (root / "same").write_text("same\n")  # rewritten with identical bytes
+    git_diff = sorted(
+        p
+        for p in subprocess.check_output(
+            ["git", "-C", str(root), "diff", "--name-only", "-z"]
+        )
+        .decode()
+        .split("\0")
+        if p
+    )
+    assert collect_git(root)["unstaged_delta"] == git_diff
+    assert git_diff == sorted(
+        ["edited", "deleted", "chmod", "link", "became-link", "new\nline"]
+    )
+
+
+def test_repository_clean_filter_never_runs_and_cannot_hide_changes(repo, tmp_path):
+    root, git = repo
+    marker = tmp_path / "filter-ran"
+    # Hostile clean filter: reports the committed content for any input.
+    hook = tmp_path / "clean.sh"
+    hook.write_text(f"#!/bin/sh\ntouch '{marker}'\ncat >/dev/null\necho baseline\n")
+    hook.chmod(0o700)
+    git("config", "filter.hide.clean", str(hook))
+    git("config", "filter.hide.required", "true")
+    (root / ".git" / "info" / "attributes").write_text("* filter=hide\n")
+    (root / "tracked.txt").write_text("hidden from a trusting observer\n")
+    assert git("diff", "--name-only") == ""  # plain Git is blinded
+    marker.unlink()
+    result = collect_git(root)
+    assert not marker.exists()
+    assert result["unstaged_delta"] == ["tracked.txt"]
+
+
+def test_assume_unchanged_cannot_hide_changes(repo):
+    root, git = repo
+    git("update-index", "--assume-unchanged", "tracked.txt")
+    (root / "tracked.txt").write_text("changed behind the index\n")
+    assert git("diff", "--name-only") == ""
+    assert collect_git(root)["unstaged_delta"] == ["tracked.txt"]
+
+
+def test_unmerged_paths_are_unstaged_changes(repo):
+    root, git = repo
+    git("checkout", "-qb", "other")
+    (root / "tracked.txt").write_text("other\n")
+    commit_all(git, "other")
+    git("checkout", "-q", "-")
+    (root / "tracked.txt").write_text("main\n")
+    commit_all(git, "main")
+    with pytest.raises(subprocess.CalledProcessError):
+        git("merge", "-q", "other")
+    assert collect_git(root)["unstaged_delta"] == ["tracked.txt"]
+
+
+def test_sha256_repositories_are_hashed_with_sha256(tmp_path):
+    root = tmp_path / "sha256"
+    subprocess.run(
+        ["git", "init", "-q", "--object-format=sha256", str(root)], check=True
+    )
+
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(root), *args]).decode()
+
+    (root / "file.txt").write_text("one\n")
+    (root / "kept.txt").write_text("kept\n")
+    commit_all(git, "sha256")
+    (root / "file.txt").write_text("two\n")
+    result = collect_git(root)
+    assert len(result["commit_after"]) == 64
+    assert result["unstaged_delta"] == ["file.txt"]
+
+
+def test_submodule_counts_as_changed_only_on_a_different_commit(repo, tmp_path):
+    root, git = repo
+    sub = root / "sub"
+    sub.mkdir()
+
+    def subgit(*args):
+        return subprocess.check_output(["git", "-C", str(sub), *args]).decode().strip()
+
+    subgit("init", "-q")
+    (sub / "a.txt").write_text("a\n")
+    commit_all(subgit, "first")
+    first = subgit("rev-parse", "HEAD")
+    git("update-index", "--add", "--cacheinfo", f"160000,{first},sub")
+    commit_all(git, "add gitlink")
+    (sub / "a.txt").write_text("dirty\n")
+    assert collect_git(root)["unstaged_delta"] == []
+    commit_all(subgit, "second")
+    assert collect_git(root)["unstaged_delta"] == ["sub"]
+
+
 def test_local_observer_authority_cannot_be_claimed_by_input(
     database, capture_request, repo
 ):
