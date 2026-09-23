@@ -88,6 +88,12 @@ The public Pydantic result models are frozen and their collections are tuples:
   `FailureRecord`, `TimelineEvent`. These are detached copies, not writable rows.
 - Typed observation data: `CallerObservation` and `GitObservation`. Their fields
   retain the existing caller/local observer distinction.
+  `GitObservation.unstaged_delta` lists tracked paths whose raw working-tree
+  bytes, file type or executable bit differ from the index, plus deleted and
+  unmerged paths. It never runs repository filters. So since 0.5.0, a file whose
+  only difference is a legitimate clean filter (for example LFS or line-ending
+  conversion) counts as changed, `assume-unchanged` flags are ignored, and a
+  submodule counts only when a different commit is checked out.
 - Derived views: `SessionView` combines canonical projections and lifecycle status;
   `ClaimView` adds `active`, `superseded`, `contested` or `retracted` status to a claim.
   `EvidenceLinkView` and `ClaimRelationView` expose attributed relations and local order.
