@@ -59,7 +59,7 @@ upgrades from supported older schemas, and integrity-check semantics. Run `black
 
 ## Python integration
 
-BlackBox 0.5.0 exposes supported operations and typed results through `import
+BlackBox 0.5.1 exposes supported operations and typed results through `import
 blackbox`. Use `initialize`, `capture`, `append_claim`, `get_session`,
 `get_timeline`, `get_claims`, `link_evidence`, `get_evidence_links`,
 `get_claim_relations`, `check_integrity`, and `get_chain_head`. See the

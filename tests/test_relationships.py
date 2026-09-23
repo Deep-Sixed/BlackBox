@@ -416,3 +416,80 @@ def test_observed_evidence_does_not_promote_linking_source(trace):
     assert bb.get_session(path, origin).sources[0].authority == "caller_asserted"
     assert bb.get_session(path, witnessed) == observation
     assert bb.check_integrity(path).ok
+
+
+def rewrite_consistently(path, *statements):
+    """Edit history and recompute every receipt, as a party with file access can."""
+    from blackbox.integrity import GENESIS, digest
+
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        triggers = db.execute(
+            "SELECT name,sql FROM sqlite_master WHERE type='trigger'"
+        ).fetchall()
+        for trigger in triggers:
+            db.execute(f"DROP TRIGGER {trigger['name']}")
+        for statement, parameters in statements:
+            db.execute(statement, parameters)
+        previous = GENESIS
+        for receipt in db.execute(
+            "SELECT * FROM record_receipts ORDER BY sequence"
+        ).fetchall():
+            table = receipt["record_type"]
+            row = db.execute(
+                f"SELECT * FROM {table} WHERE id=?", (receipt["record_id"],)
+            ).fetchone()
+            current = digest(table, row, receipt["sequence"], previous)
+            db.execute(
+                "UPDATE record_receipts SET previous_digest=?, digest=? "
+                "WHERE sequence=?",
+                (previous, current, receipt["sequence"]),
+            )
+            previous = current
+        for trigger in triggers:
+            db.execute(trigger["sql"])
+
+
+@pytest.mark.parametrize("kind", ["observation", "evidence", "artifact"])
+def test_link_content_must_match_its_id(trace, kind):
+    path, old, origin = trace
+    bb.link_evidence(path, origin, link_input(old, kind))
+    assert bb.check_integrity(path).ok
+    rewrite_consistently(path, ("UPDATE evidence_links SET relation='contradicts'", ()))
+    result = bb.check_integrity(path)
+    assert result.errors == ("relationship_integrity",)
+    assert result.first_broken_sequence is None  # every receipt was recomputed
+
+
+def test_link_cannot_point_at_evidence_recorded_after_it(trace):
+    path, old, origin = trace
+    link = link_input(old)
+    link_id = bb.link_evidence(path, origin, link).link_id
+    later = bb.get_session(
+        path,
+        bb.capture(
+            path,
+            {
+                "request_id": "later",
+                "producer": "test",
+                "observations": [{"source": "actor", "kind": "test", "name": "late"}],
+            },
+        ).session_id,
+    )
+    moved = {**link, "evidence_record_id": later.evidence[0].id}
+    moved_id = identity("link", [origin, moved])
+    assert bb.check_integrity(path).ok
+    rewrite_consistently(
+        path,
+        (
+            "UPDATE evidence_links SET id=?, evidence_id=? WHERE id=?",
+            (moved_id, later.evidence[0].id, link_id),
+        ),
+        ("UPDATE events SET entity_id=? WHERE entity_id=?", (moved_id, link_id)),
+        (
+            "UPDATE record_receipts SET record_id=? WHERE record_id=?",
+            (moved_id, link_id),
+        ),
+    )
+    # The ID now matches its content; only chronology can catch the move.
+    assert bb.check_integrity(path).errors == ("relationship_integrity",)

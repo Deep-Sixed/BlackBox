@@ -40,6 +40,12 @@ V3_RECORD_FIELDS = {
 }
 RECORD_FIELDS = {**V2_RECORD_FIELDS, **V3_RECORD_FIELDS}
 GENESIS = "0" * 64
+# Evidence-link target columns; exactly one is set (enforced by a CHECK).
+LINK_RECORD_COLUMNS = (
+    ("observation", "observation_id"),
+    ("evidence", "evidence_id"),
+    ("artifact", "artifact_id"),
+)
 
 
 def digest(table, row, sequence, previous):
@@ -205,11 +211,14 @@ def relationship_errors(connection):
     events = {r["id"]: r for r in connection.execute("SELECT * FROM events")}
     claim_events = {}
     link_events = {}
+    record_events = {}
     for event in events.values():
         if event["kind"] == "CLAIM":
             claim_events.setdefault(event["entity_id"], []).append(event)
         if event["kind"] == "EVIDENCE_LINK":
             link_events.setdefault(event["entity_id"], []).append(event)
+        if event["kind"] in ("OBSERVATION", "ARTIFACT"):
+            record_events.setdefault(event["entity_id"], []).append(event)
     if claim_events.keys() != claims.keys():
         errors.add("relationship_integrity")
     relations = {
@@ -266,19 +275,51 @@ def relationship_errors(connection):
     links = list(connection.execute("SELECT * FROM evidence_links"))
     if link_events.keys() != {r["id"] for r in links}:
         errors.add("relationship_integrity")
+    # An evidence receipt is written with its observation and shares its event.
+    receipts = {
+        r["id"]: r["observation_id"]
+        for r in connection.execute("SELECT id,observation_id FROM evidence")
+    }
     for link in links:
         source = sources.get(link["source_id"])
         recorded = link_events.get(link["id"], [])
         target_events = claim_events.get(link["claim_id"], [])
+        targets = [
+            (kind, link[column])
+            for kind, column in LINK_RECORD_COLUMNS
+            if link[column] is not None
+        ]
+        # Normally a CHECK guarantees one target; a bypassed CHECK must not crash.
+        record_type, record_id = targets[0] if len(targets) == 1 else (None, None)
+        evidence_events = record_events.get(
+            receipts.get(record_id) if record_type == "evidence" else record_id, []
+        )
         if (
             source is None
             or source["session_id"] != link["session_id"]
             or source["authority"] != "caller_asserted"
+            or record_type is None
             or len(recorded) != 1
             or len(target_events) != 1
+            or len(evidence_events) != 1
             or recorded[0]["session_id"] != link["session_id"]
             or recorded[0]["recorded_at"] != link["recorded_at"]
             or target_events[0]["sequence"] >= recorded[0]["sequence"]
+            or evidence_events[0]["sequence"] >= recorded[0]["sequence"]
+        ):
+            errors.add("relationship_integrity")
+        if source is not None and link["id"] != identity(
+            "link",
+            [
+                link["session_id"],
+                {
+                    "source": source["identity"],
+                    "claim_id": link["claim_id"],
+                    "record_type": record_type,
+                    "evidence_record_id": record_id,
+                    "relation": link["relation"],
+                },
+            ],
         ):
             errors.add("relationship_integrity")
     return errors
