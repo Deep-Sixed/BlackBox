@@ -320,6 +320,28 @@ def test_staged_and_unstaged_cancellation_is_visible(repo):
     assert result["staged_delta"] == result["unstaged_delta"] == ["tracked.txt"]
 
 
+def test_observed_repository_config_cannot_run_or_blind_the_git_observer(
+    repo, tmp_path, monkeypatch
+):
+    root, git = repo
+    marker = tmp_path / "fsmonitor-ran"
+    hook = tmp_path / "fsmonitor.sh"
+    # fsmonitor v2 hook: return a token and claim that no paths changed.
+    hook.write_text(f"#!/bin/sh\ntouch '{marker}'\nprintf 'token\\0'\n")
+    hook.chmod(0o700)
+    git("config", "core.fsmonitor", str(hook))
+    git("config", "core.fsmonitorHookVersion", "2")
+    git("update-index", "--fsmonitor")
+    git("status")
+    (root / "tracked.txt").write_text("hidden from a trusting observer")
+    assert git("diff", "--name-only") == ""
+    marker.unlink()
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere"))
+    result = collect_git(root)
+    assert not marker.exists()
+    assert result["unstaged_delta"] == result["working_tree_delta"] == ["tracked.txt"]
+
+
 def test_local_observer_authority_cannot_be_claimed_by_input(
     database, capture_request, repo
 ):

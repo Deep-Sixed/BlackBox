@@ -20,7 +20,8 @@ planned; the current runtime does not independently witness process execution.
 
 ## Local use
 
-This repository pins Python exactly to `3.14.5`.
+The package supports Python 3.14 (`>=3.14,<3.15`). CI and the release
+compatibility tests run on exactly `3.14.5`.
 
 ```bash
 uv sync --frozen --python 3.14.5

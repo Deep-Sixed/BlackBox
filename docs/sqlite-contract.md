@@ -1,7 +1,8 @@
 # SQLite contract
 
 BlackBox uses one private local SQLite database. The application ID is
-`0x42425831` (`1111644209`). Python is pinned to 3.14.5. Writers require WAL,
+`0x42425831` (`1111644209`). The package requires Python 3.14; CI
+verifies on 3.14.5. Writers require WAL,
 `foreign_keys=ON`, `synchronous=FULL`, and a 5000 ms busy timeout. Database files
 are created with mode `0600`; writers reject existing files with group/other
 permissions and reject symlinks. SQLite manages WAL and shared-memory sidecars.
