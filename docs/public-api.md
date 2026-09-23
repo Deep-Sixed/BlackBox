@@ -176,6 +176,8 @@ including `schema_integrity`, `sqlite_integrity` and `database_unavailable`.
 CI installs the built wheel into a disposable environment and executes a copied
 external consumer in isolated Python mode, outside the checkout. That consumer
 uses only public imports for initialize, capture, append claim, reconstruction,
-timeline, claims and integrity. CLI smoke checks run against the same installed
-wheel, including attributed links and cross-session retractions. Released-v1 and
+timeline, claims, attributed evidence links, cross-session retraction and
+integrity. CLI smoke checks against the same installed wheel run `--help`,
+`init`, two `capture`s, a cross-session `claim --relation retracts`, `claims`
+and `check`; evidence links have no CLI command. Released-v1 and
 released-v2 migration/rollback tests remain in the full suite.
