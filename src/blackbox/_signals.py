@@ -33,3 +33,7 @@ class ClaimConflict(sqlite3.IntegrityError):
 
 class ObservationIssue(ValueError):
     pass
+
+
+class ObservationRejected(ObservationIssue):
+    """Observed metadata is sensitive-shaped; retrying unchanged cannot help."""

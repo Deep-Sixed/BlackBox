@@ -23,6 +23,7 @@ from .errors import (
     MigrationRequiredError,
     NotFoundError,
     ObservationError,
+    ObservationRejectedError,
     SchemaError,
     ValidationError,
 )
@@ -75,6 +76,8 @@ def _boundary[**P, R](function: Callable[P, R]) -> Callable[P, R]:
             raise ConflictError() from None
         except _signals.MissingRecord:
             raise NotFoundError() from None
+        except _signals.ObservationRejected:
+            raise ObservationRejectedError() from None
         except _signals.ObservationIssue:
             raise ObservationError() from None
         except sqlite3.Error as error:

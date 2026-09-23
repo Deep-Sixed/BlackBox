@@ -9,8 +9,10 @@ serve downstream consumers; no downstream inference upgrades source authority.
 The durable boundary is one local SQLite database. Sessions have stable identity
 from a caller's request ID, with a fingerprint binding retries to identical input.
 A durable RESERVED event precedes capture. A single transaction commits capture
-and COMMITTED; rollback leaves a retryable reservation. Recoverable errors append
-FAILED_RETRYABLE without persisting exception text. Invalid input is rejected before
+and COMMITTED; rollback leaves a reusable reservation. Capture failures append
+FAILED_RETRYABLE without persisting exception text; this lifecycle state means the
+reservation can be retried after remediation, while each durable failure row separately
+records whether an unchanged automatic retry is appropriate. Invalid input is rejected before
 reservation. Conflicting reuse of an ID fails instead of overwriting evidence.
 
 Sources distinguish caller-asserted identity from the built-in local Git observer.

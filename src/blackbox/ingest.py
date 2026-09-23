@@ -7,7 +7,13 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
-from ._signals import ClaimConflict, MissingRecord, ObservationIssue, RequestConflict
+from ._signals import (
+    ClaimConflict,
+    MissingRecord,
+    ObservationIssue,
+    ObservationRejected,
+    RequestConflict,
+)
 from .db import connect, now, transaction
 from .integrity import append_receipt
 from .models import Capture, Claim, EvidenceLink, canonical, identity
@@ -169,6 +175,8 @@ def ingest(
                 if repo is not None:
                     try:
                         data = collect_git(repo, baseline)
+                    except ObservationRejected:
+                        raise
                     except ValueError, OSError, subprocess.SubprocessError:
                         raise ObservationIssue(
                             "Git metadata collection failed"
@@ -201,8 +209,11 @@ def ingest(
                         append_receipt(connection, "artifacts", key)
                         event(connection, session, "ARTIFACT", key)
                 event(connection, session, "COMMITTED", session)
-        except Exception:
+        except Exception as error:
             # No exception message, raw stdout, environment, or input is persisted.
+            # FAILED_RETRYABLE means the reservation remains reusable after remediation;
+            # the failure row records whether an unchanged automatic retry is appropriate.
+            failure_retryable = 0 if isinstance(error, ObservationRejected) else 1
             # If even this transaction fails, RESERVED still supports a retry.
             with transaction(connection):
                 if state(connection, session) != "COMMITTED":
@@ -216,7 +227,7 @@ def ingest(
                             session,
                             failure_event,
                             "CAPTURE_FAILED",
-                            1,
+                            failure_retryable,
                         ),
                     )
                     append_receipt(

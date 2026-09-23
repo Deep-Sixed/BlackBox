@@ -7,6 +7,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from ._signals import ObservationRejected
 from .models import safe_strings
 
 # The observed repository's own config is controlled by the observed actor.
@@ -80,5 +81,9 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     }
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
         raise ValueError("Git HEAD changed during capture; retry")
-    safe_strings(result)
+    try:
+        safe_strings(result)
+    except ValueError:
+        # Deterministic until the repository is changed: not a transient failure.
+        raise ObservationRejected("sensitive-shaped Git metadata") from None
     return result

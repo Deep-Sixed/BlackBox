@@ -21,6 +21,7 @@ from .errors import (
     MigrationRequiredError,
     NotFoundError,
     ObservationError,
+    ObservationRejectedError,
     SchemaError,
     ValidationError,
 )
@@ -46,7 +47,7 @@ from .results import (
     TimelineEvent,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __all__ = [
     "ArtifactRecord",
     "BlackBoxError",
@@ -71,6 +72,7 @@ __all__ = [
     "NotFoundError",
     "ObservationError",
     "ObservationRecord",
+    "ObservationRejectedError",
     "SchemaError",
     "SessionRecord",
     "SessionView",

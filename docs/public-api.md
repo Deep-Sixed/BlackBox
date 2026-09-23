@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.4.0
+# Supported public API — BlackBox 0.4.1
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -9,6 +9,7 @@ functions, row dictionaries or private helpers. The wheel includes `py.typed`.
 
 Package 0.3.0 established the public boundary. Package 0.4.0 adds attributed
 relationships and schema v3; see [relationship semantics](trace-relationships.md).
+Package 0.4.1 keeps schema v3 and hardens observer rejection/retry reporting.
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -120,11 +121,19 @@ retry contract.
 | `BusyError` (a ConflictError) | `database_busy` | true |
 | `NotFoundError` | `not_found` | false |
 | `ObservationError` | `observation_failed` | true |
+| `ObservationRejectedError` (an ObservationError) | `observation_rejected` | false; remediate the repository first |
 
 Busy means SQLite lock contention. Conflicting request reuse or a second
 superseding claim is a nonretryable conflict. An observer failure can be retried
 with the same request after the local observation problem is resolved; the existing
-durable reservation/failure history remains. BlackBox does not perform retry loops.
+durable reservation/failure history remains.
+When the Git observer's own metadata (a path or branch name) looks like a
+credential, capture raises `ObservationRejectedError`: an unchanged retry fails
+the same way, so rename or remove the offending path, then retry the same
+request. The session stays `FAILED_RETRYABLE` until then because that lifecycle
+state means the durable reservation remains reusable after remediation; the stored
+failure has `retryable=0`, matching the public error/CLI hint against blind retry.
+BlackBox does not perform retry loops.
 False retryability means inspect/remediate, not that repair is impossible. Disk
 full, unavailable storage and corruption must not trigger blind automatic retries.
 
@@ -170,6 +179,8 @@ including `schema_integrity`, `sqlite_integrity` and `database_unavailable`.
 CI installs the built wheel into a disposable environment and executes a copied
 external consumer in isolated Python mode, outside the checkout. That consumer
 uses only public imports for initialize, capture, append claim, reconstruction,
-timeline, claims and integrity. CLI smoke checks run against the same installed
-wheel, including attributed links and cross-session retractions. Released-v1 and
+timeline, claims, attributed evidence links, cross-session retraction and
+integrity. CLI smoke checks against the same installed wheel run `--help`,
+`init`, two `capture`s, a cross-session `claim --relation retracts`, `claims`
+and `check`; evidence links have no CLI command. Released-v1 and
 released-v2 migration/rollback tests remain in the full suite.
