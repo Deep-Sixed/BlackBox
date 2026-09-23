@@ -23,6 +23,11 @@ link ID, claim ID, evidence reference/type, relation, source ID, origin session 
 recorded time and sequence. Referenced records remain available through session
 reconstruction. A missing reference raises `NotFoundError` without partial writes.
 
+`check_integrity` recomputes each link ID from its origin session, source,
+claim, evidence reference and relation, and requires the link's event to follow
+both the claim's event and the referenced record's event. An evidence receipt
+uses its observation's event. Any mismatch reports `relationship_integrity`.
+
 ## Claim relations
 
 `append_claim(..., target=older_id, relation=...)` permits `supersedes`, `contests`

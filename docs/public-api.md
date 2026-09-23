@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.5.0
+# Supported public API — BlackBox 0.5.1
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -12,6 +12,8 @@ relationships and schema v3; see [relationship semantics](trace-relationships.md
 Package 0.4.1 keeps schema v3 and hardens observer rejection/retry reporting.
 Package 0.5.0 keeps schema v3 and adds chain-head export, anchored integrity
 checks and the first broken receipt position; see [chain anchoring](#chain-anchoring).
+Package 0.5.1 keeps schema v3; `check_integrity` also recomputes evidence-link IDs
+and checks that a link follows the evidence it references.
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
