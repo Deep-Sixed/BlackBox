@@ -5,7 +5,12 @@ BlackBox uses one private local SQLite database. The application ID is
 verifies on 3.14.5. Writers require WAL,
 `foreign_keys=ON`, `synchronous=FULL`, and a 5000 ms busy timeout. Database files
 are created with mode `0600`; writers reject existing files with group/other
-permissions and reject symlinks. SQLite manages WAL and shared-memory sidecars.
+permissions and reject symlinks. Writers also reject a database directory that
+is not owned by the current user (or root) or is writable by group or others,
+and any ancestor directory that another user owns or could write without the
+sticky bit: whoever can write the directory can replace the database or plant a
+WAL sidecar whatever the file's mode. SQLite manages WAL and shared-memory
+sidecars.
 This durability contract depends on the filesystem and device honoring SQLite's
 locking and synchronization requests.
 
@@ -110,7 +115,7 @@ lock for the backfill. No external observer authentication is introduced.
 
 ## Python consumer boundary
 
-Package 0.6.3 uses schema v4 (introduced by 0.6.0). Public reader operations raise
+Package 0.6.4 uses schema v4 (introduced by 0.6.0). Public reader operations raise
 `MigrationRequiredError` for v1/v2/v3; `initialize` and capture/claim/link
 writer operations may migrate. `check_integrity` returns typed findings when
 inspection succeeds and raises bounded errors when the database cannot be opened

@@ -22,6 +22,8 @@ from .models import safe_strings
 # executes arbitrary programs and can report which paths git treats as unchanged,
 # and never honour refs/replace/, which substitutes one object for another, so a
 # replaced baseline or HEAD commit could make committed or staged changes vanish.
+# Staged and committed deltas compare raw index/tree entries rather than asking
+# Git's diff policy, so submodule ignore settings cannot drop a changed gitlink.
 HARDENED_CONFIG = ("-c", "core.fsmonitor=false", "--no-replace-objects")
 
 
@@ -164,14 +166,15 @@ def entry_changed(
     mode: int,
     oid: str,
     algorithm: str,
-    filemode: bool,
     sparse: bool,
 ) -> bool:
     """Compare one stage-0 index entry with the working tree, without Git filters.
 
     This is raw-byte equality: content that differs only through a legitimate
     clean filter (for example LFS or line-ending conversion) counts as changed,
-    and assume-unchanged flags are ignored rather than trusted. A skip-worktree
+    and assume-unchanged flags and core.fileMode are ignored rather than trusted:
+    a filesystem without executable bits over-reports mode changes instead of
+    letting the observed repository switch the check off. A skip-worktree
     (sparse) entry that is absent is expected; one that is present is compared,
     so the flag cannot hide an edit.
     """
@@ -216,7 +219,7 @@ def entry_changed(
         opened = os.fstat(handle)
         if not stat.S_ISREG(opened.st_mode):
             return True
-        if filemode and bool(opened.st_mode & 0o100) != bool(mode & 0o100):
+        if bool(opened.st_mode & 0o100) != bool(mode & 0o100):
             return True
         return blob_id(algorithm, read_chunks(handle), opened.st_size) != oid
     finally:
@@ -234,20 +237,6 @@ def unstaged_paths(root: Path) -> list[str]:
     )
     if algorithm not in ("sha1", "sha256"):
         raise ValueError("unsupported Git object format")
-    filemode = (
-        git(
-            root,
-            "config",
-            "--type=bool",
-            "--default=true",
-            "--get",
-            "core.fileMode",
-            work_tree=root,
-        )
-        .decode()
-        .strip()
-        == "true"
-    )
     changed = set()
     tree = Worktree(root)
     try:
@@ -266,13 +255,132 @@ def unstaged_paths(root: Path) -> list[str]:
                 int(mode, 8),
                 oid.decode(),
                 algorithm,
-                filemode,
                 sparse=tag == b"S",
             ):
                 changed.add(path.decode("utf-8", "surrogateescape"))
     finally:
         tree.close()
     return sorted(changed)
+
+
+def tree_entries(root: Path, commit: str) -> dict[str, tuple[bytes, bytes]]:
+    """Raw path -> (mode, object ID) for one commit tree."""
+
+    entries = {}
+    for record in git(
+        root, "ls-tree", "-r", "--full-tree", "-z", commit, work_tree=root
+    ).split(b"\0"):
+        if not record:
+            continue
+        meta, path = record.split(b"\t", 1)
+        mode, _kind, oid = meta.split(b" ")
+        entries[path.decode("utf-8", "surrogateescape")] = (mode, oid)
+    return entries
+
+
+def intent_to_add(root: Path, head: str) -> set[str]:
+    """Paths recorded with `git add -N`: in the index, but nothing staged yet.
+
+    `ls-files --stage` lists them as ordinary empty blobs, so compare HEAD with
+    the index twice: `--ita-invisible-in-index` changes only how these entries
+    are reported. Neither run reads the working tree, so no filter runs.
+    """
+
+    def delta(*options: str) -> set[bytes]:
+        output = git(
+            root,
+            "diff-index",
+            "--cached",
+            "--no-renames",
+            "--name-status",
+            "-z",
+            *options,
+            head,
+            "--",
+            work_tree=root,
+        ).split(b"\0")
+        return {status + b"\0" + path for status, path in zip(output[::2], output[1::2])}
+
+    return {
+        record.split(b"\0", 1)[1].decode("utf-8", "surrogateescape")
+        for record in delta("--ita-visible-in-index")
+        ^ delta("--ita-invisible-in-index")
+    }
+
+
+def index_entries(
+    root: Path, head: str
+) -> tuple[dict[str, tuple[bytes, bytes]], set[str]]:
+    """Raw stage-0 index entries plus paths with unresolved stages.
+
+    Intent-to-add (`git add -N`) entries are left out, as in Git: nothing is
+    staged, and the unstaged comparison reports the path against the placeholder
+    empty blob.
+    """
+
+    placeholders = intent_to_add(root, head)
+    entries = {}
+    unmerged = set()
+    for record in git(root, "ls-files", "--stage", "-z", work_tree=root).split(b"\0"):
+        if not record:
+            continue
+        meta, path = record.split(b"\t", 1)
+        mode, oid, stage = meta.split(b" ")
+        name = path.decode("utf-8", "surrogateescape")
+        if stage != b"0":
+            unmerged.add(name)
+        elif name not in placeholders:
+            entries[name] = (mode, oid)
+    return entries, unmerged
+
+
+def entry_delta(
+    left: dict[str, tuple[bytes, bytes]],
+    right: dict[str, tuple[bytes, bytes]],
+    *,
+    always: set[str] | None = None,
+) -> list[str]:
+    """Paths added, deleted, mode-changed, object-changed or explicitly unresolved."""
+
+    candidates = set(left) | set(right) | (always or set())
+    return sorted(
+        path
+        for path in candidates
+        if path in (always or set()) or left.get(path) != right.get(path)
+    )
+
+
+def untracked_paths(root: Path) -> list[str]:
+    """Untracked paths, hidden only by ignore rules that are themselves visible.
+
+    `.gitignore` files live in the working tree, so editing one shows up as an
+    unstaged or untracked change. `.git/info/exclude` and `core.excludesFile` do
+    not, so they are never applied. Untracked `.gitignore` files are listed even
+    when they ignore themselves, so a new one cannot hide its directory silently.
+    """
+    return sorted(
+        set(
+            paths(
+                root,
+                "ls-files",
+                "--others",
+                "--exclude-per-directory=.gitignore",
+                "-z",
+                work_tree=root,
+            )
+        )
+        | set(
+            paths(
+                root,
+                "ls-files",
+                "--others",
+                "-z",
+                "--",
+                ":(glob)**/.gitignore",
+                work_tree=root,
+            )
+        )
+    )
 
 
 def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
@@ -299,46 +407,21 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
             .decode()
             .strip()
         )
-    staged = paths(
-        root,
-        "diff",
-        "--cached",
-        "--name-only",
-        "--no-renames",
-        "-z",
-        head,
-        "--",
-        work_tree=root,
-    )
+    head_entries = tree_entries(root, head)
+    indexed, unmerged = index_entries(root, head)
+    staged = entry_delta(head_entries, indexed, always=unmerged)
     unstaged = unstaged_paths(root)
     result = {
         "commit_before": before,
         "commit_after": head,
         "branch": git(root, "branch", "--show-current", work_tree=root).decode().strip(),
-        "committed_delta": paths(
-            root,
-            "diff",
-            "--name-only",
-            "--no-renames",
-            "-z",
-            before,
-            head,
-            "--",
-            work_tree=root,
-        )
+        "committed_delta": entry_delta(tree_entries(root, before), head_entries)
         if before
         else None,
         "staged_delta": staged,
         "unstaged_delta": unstaged,
         "working_tree_delta": sorted(set(staged) | set(unstaged)),
-        "untracked_files": paths(
-            root,
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "-z",
-            work_tree=root,
-        ),
+        "untracked_files": untracked_paths(root),
     }
     if git(root, "rev-parse", "HEAD", work_tree=root).decode().strip() != head:
         raise ValueError("Git HEAD changed during capture; retry")

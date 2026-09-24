@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.6.3
+# Supported public API — BlackBox 0.6.4
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -24,6 +24,9 @@ Package 0.6.2 keeps schema v4; the Git observer ignores the observed repository'
 replace refs, which could otherwise hide committed or staged changes.
 Package 0.6.3 keeps schema v4; `blackbox hook` records oversized payloads by
 digest instead of rejecting them, and a symlinked `.git` is accepted as in Git.
+Package 0.6.4 keeps schema v4; the Git observer no longer lets the observed
+repository's `diff.ignoreSubmodules`, `.gitmodules` `ignore`, `core.fileMode`,
+`.git/info/exclude` or `core.excludesFile` settings hide changes (below).
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -116,7 +119,16 @@ The public Pydantic result models are frozen and their collections are tuples:
   a path under a symlinked or non-directory parent counts as deleted
   (the symlink is never followed), a sparse-checkout (skip-worktree) path counts
   only if it is present and differs, and a submodule without a checked-out
-  commit counts as changed rather than failing the capture.
+  commit counts as changed rather than failing the capture. Since 0.6.4 the
+  executable bit is compared even when the repository sets `core.fileMode=false`,
+  so on a filesystem without executable bits every non-executable file may count
+  as changed, and `committed_delta` and `staged_delta` include submodule commit
+  changes regardless of the repository's submodule `ignore` settings.
+  `GitObservation.untracked_files` lists untracked paths not ignored by a
+  `.gitignore` in the working tree; since 0.6.4 `.git/info/exclude` and
+  `core.excludesFile` are not applied, and an untracked `.gitignore` is always
+  listed, even when it ignores itself. A path marked with `git add -N`
+  (intent-to-add) counts as unstaged, not staged, as in Git.
 - Derived views: `SessionView` combines canonical projections and lifecycle status;
   `ClaimView` adds `active`, `superseded`, `contested` or `retracted` status to a claim.
   `EvidenceLinkView` and `ClaimRelationView` expose attributed relations and local order.

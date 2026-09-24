@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from blackbox._signals import DatabaseIssue
 from blackbox.db import connect
 from blackbox.ingest import append_claim, ingest
 from blackbox.models import Capture, identity
@@ -397,7 +398,9 @@ def test_repository_clean_filter_never_runs_and_cannot_hide_changes(repo, tmp_pa
     git("config", "filter.hide.clean", str(hook))
     git("config", "filter.hide.required", "true")
     (root / ".git" / "info" / "attributes").write_text("* filter=hide\n")
-    (root / "tracked.txt").write_text("hidden from a trusting observer\n")
+    # Same size as the committed "baseline\n", so Git must re-hash the file,
+    # running the filter, in any command that compares the working tree.
+    (root / "tracked.txt").write_text("tampered\n")
     assert git("diff", "--name-only") == ""  # plain Git is blinded
     marker.unlink()
     result = collect_git(root)
@@ -725,6 +728,115 @@ def test_dangling_git_symlink_is_not_a_repository(repo, tmp_path):
         collect_git(root)
 
 
+def add_submodule(repo):
+    """Commit a gitlink at `sub`; return the baseline and a function that stages
+    the gitlink at a new submodule commit."""
+    root, git = repo
+    sub = root / "sub"
+    sub.mkdir()
+
+    def subgit(*args):
+        return subprocess.check_output(["git", "-C", str(sub), *args]).decode().strip()
+
+    def advance(content):
+        (sub / "a.txt").write_text(content)
+        commit_all(subgit, content)
+        # Newer Git's `add` skips a submodule whose .gitmodules says ignore=all.
+        commit = subgit("rev-parse", "HEAD")
+        git("update-index", "--cacheinfo", f"160000,{commit},sub")
+        assert git("ls-files", "--stage", "sub").split()[1] == commit
+
+    subgit("init", "-q")
+    (sub / "a.txt").write_text("a\n")
+    commit_all(subgit, "first")
+    first = subgit("rev-parse", "HEAD")
+    git("update-index", "--add", "--cacheinfo", f"160000,{first},sub")
+    commit_all(git, "add gitlink")
+    return git("rev-parse", "HEAD"), advance
+
+
+@pytest.mark.parametrize("setting", ["config", "gitmodules"])
+def test_submodule_ignore_settings_cannot_hide_gitlink_changes(repo, setting):
+    root, git = repo
+    baseline, advance = add_submodule(repo)
+    if setting == "config":
+        git("config", "diff.ignoreSubmodules", "all")
+    else:
+        git("config", "-f", ".gitmodules", "submodule.sub.path", "sub")
+        git("config", "-f", ".gitmodules", "submodule.sub.ignore", "all")
+    advance("second")
+    commit_all(git, "bump gitlink")
+    advance("third")
+    # plain Git is fooled
+    assert git("diff", "--cached", "--name-only", "HEAD") == ""
+    assert "sub" not in git("diff", "--name-only", baseline, "HEAD").split()
+    result = collect_git(root, baseline)
+    assert "sub" in result["committed_delta"]
+    assert result["staged_delta"] == ["sub"]
+
+
+def test_core_filemode_false_cannot_hide_executable_bit_changes(repo):
+    root, git = repo
+    git("config", "core.fileMode", "false")
+    (root / "tracked.txt").chmod(0o755)
+    assert git("diff", "--name-only") == ""  # plain Git is fooled
+    result = collect_git(root)
+    assert result["unstaged_delta"] == result["working_tree_delta"] == ["tracked.txt"]
+
+
+def test_untracked_files_cannot_hide_behind_invisible_ignore_rules(repo, tmp_path):
+    root, git = repo
+    (root / "info-excluded.txt").write_text("hidden\n")
+    (root / ".git" / "info" / "exclude").write_text("info-excluded.txt\n")
+    (root / "globally-excluded.txt").write_text("hidden\n")
+    global_excludes = tmp_path / "global-excludes"
+    global_excludes.write_text("globally-excluded.txt\n")
+    git("config", "core.excludesFile", str(global_excludes))
+    (root / "d").mkdir()
+    (root / "d" / "new.txt").write_text("hidden\n")
+    (root / "d" / ".gitignore").write_text("*\n")  # ignores itself too
+    (root / "build.log").write_text("ignored\n")
+    (root / ".gitignore").write_text("*.log\n")
+    commit_all(git, "track .gitignore")
+    (root / "build.log").write_text("ignored\n")  # commit_all -A skipped it
+    assert git("ls-files", "--others", "--exclude-standard") == ""  # Git hides all
+    result = collect_git(root)
+    assert result["untracked_files"] == [
+        "d/.gitignore",
+        "globally-excluded.txt",
+        "info-excluded.txt",
+    ]
+
+
+def test_intent_to_add_is_unstaged_like_in_git(repo):
+    root, git = repo
+    (root / "new").write_text("not staged yet\n")
+    git("add", "-N", "new")
+    assert git("diff", "--cached", "--name-only") == ""
+    result = collect_git(root)
+    assert result["staged_delta"] == []
+    assert result["unstaged_delta"] == result["working_tree_delta"] == ["new"]
+
+
+def test_staged_empty_file_is_not_mistaken_for_intent_to_add(repo):
+    root, git = repo
+    (root / "new").write_text("")
+    git("add", "new")
+    result = collect_git(root)
+    assert result["staged_delta"] == result["working_tree_delta"] == ["new"]
+    assert result["unstaged_delta"] == []
+
+
+def test_intent_to_add_over_a_removed_path_is_a_staged_deletion(repo):
+    root, git = repo
+    (root / "tracked.txt").write_text("re-added\n")
+    git("rm", "-q", "--cached", "tracked.txt")
+    git("add", "-N", "tracked.txt")
+    assert git("diff", "--cached", "--name-only") == "tracked.txt"
+    result = collect_git(root)
+    assert result["staged_delta"] == result["unstaged_delta"] == ["tracked.txt"]
+
+
 def test_local_observer_authority_cannot_be_claimed_by_input(
     database, capture_request, repo
 ):
@@ -808,6 +920,40 @@ def test_model_instance_cannot_bypass_validation(database):
     malicious = Capture.model_construct(request_id="x", producer="password=synthetic")
     with pytest.raises(ValueError):
         ingest(database, malicious)
+
+
+@pytest.mark.parametrize("mode", [0o777, 0o1777, 0o770, 0o707])
+def test_database_directory_writable_by_others_is_refused(tmp_path, mode):
+    directory = tmp_path / "shared"
+    directory.mkdir()
+    directory.chmod(mode)
+    with pytest.raises(DatabaseIssue):
+        connect(directory / "blackbox.sqlite3")
+    assert not (directory / "blackbox.sqlite3").exists()
+
+
+@pytest.mark.parametrize("mode, allowed", [(0o777, False), (0o1777, True)])
+def test_database_ancestor_may_be_shared_only_with_the_sticky_bit(
+    tmp_path, mode, allowed
+):
+    ancestor = tmp_path / "ancestor"
+    (ancestor / "private").mkdir(parents=True, mode=0o700)
+    ancestor.chmod(mode)
+    database = ancestor / "private" / "blackbox.sqlite3"
+    if allowed:
+        connect(database).close()
+    else:
+        with pytest.raises(DatabaseIssue):
+            connect(database)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs root to chown")
+def test_database_directory_owned_by_another_user_is_refused(tmp_path):
+    directory = tmp_path / "theirs"
+    directory.mkdir(mode=0o700)
+    os.chown(directory, 12345, 12345)
+    with pytest.raises(DatabaseIssue):
+        connect(directory / "blackbox.sqlite3")
 
 
 def test_foreign_database_not_adopted(tmp_path):
