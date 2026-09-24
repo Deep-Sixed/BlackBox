@@ -810,15 +810,31 @@ def test_untracked_files_cannot_hide_behind_invisible_ignore_rules(repo, tmp_pat
 
 def test_intent_to_add_is_unstaged_like_in_git(repo):
     root, git = repo
-    (root / "later.txt").write_text("not staged yet\n")
+    (root / "new").write_text("not staged yet\n")
+    git("add", "-N", "new")
+    assert git("diff", "--cached", "--name-only") == ""
+    result = collect_git(root)
+    assert result["staged_delta"] == []
+    assert result["unstaged_delta"] == result["working_tree_delta"] == ["new"]
+
+
+def test_staged_empty_file_is_not_mistaken_for_intent_to_add(repo):
+    root, git = repo
+    (root / "new").write_text("")
+    git("add", "new")
+    result = collect_git(root)
+    assert result["staged_delta"] == result["working_tree_delta"] == ["new"]
+    assert result["unstaged_delta"] == []
+
+
+def test_intent_to_add_over_a_removed_path_is_a_staged_deletion(repo):
+    root, git = repo
     (root / "tracked.txt").write_text("re-added\n")
     git("rm", "-q", "--cached", "tracked.txt")
-    git("add", "-N", "later.txt", "tracked.txt")
+    git("add", "-N", "tracked.txt")
     assert git("diff", "--cached", "--name-only") == "tracked.txt"
-    assert git("diff", "--name-only").split() == ["later.txt", "tracked.txt"]
     result = collect_git(root)
-    assert result["staged_delta"] == ["tracked.txt"]  # removed from the index
-    assert result["unstaged_delta"] == ["later.txt", "tracked.txt"]
+    assert result["staged_delta"] == result["unstaged_delta"] == ["tracked.txt"]
 
 
 def test_local_observer_authority_cannot_be_claimed_by_input(
