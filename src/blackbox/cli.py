@@ -20,6 +20,7 @@ from .api import (
 )
 from .errors import BlackBoxError, IntegrityError, SchemaError, ValidationError
 from .hooks import hook_requests, oversized_request, read_payload
+from .models import CLAIM_RELATIONS
 
 
 def main() -> int:
@@ -45,7 +46,7 @@ def main() -> int:
     claim.add_argument("session")
     claim.add_argument("--input", type=Path, required=True)
     claim.add_argument("--target")
-    claim.add_argument("--relation", choices=("supersedes", "contests", "retracts"))
+    claim.add_argument("--relation", choices=CLAIM_RELATIONS)
     hook = commands.add_parser("hook")
     hook.add_argument("--producer", default="claude-code")
     hook.add_argument("--git", action="store_true")

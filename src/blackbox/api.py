@@ -4,6 +4,7 @@ import re
 import sqlite3
 import subprocess
 from collections.abc import Callable, Mapping
+from contextlib import closing
 from functools import wraps
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from .integrity import (
     relationship_errors,
 )
 from .models import (
+    CLAIM_RELATIONS,
     Capture,
     ChainAnchor,
     Claim,
@@ -131,6 +133,12 @@ def _identifier(value):
     return value
 
 
+def _optional_identifiers(*values):
+    for value in values:
+        if value is not None:
+            _identifier(value)
+
+
 def _through(value):
     if value is not None and (type(value) is not int or not 0 <= value <= 2**63 - 1):
         raise ValidationError()
@@ -207,13 +215,10 @@ def append_claim(
     _path(database)
     _identifier(session)
     validated = _input(Claim, claim)
-    if target is not None:
-        _identifier(target)
+    _optional_identifiers(target)
     if (target is None) != (relation is None) or relation not in (
         None,
-        "supersedes",
-        "contests",
-        "retracts",
+        *CLAIM_RELATIONS,
     ):
         raise ValidationError()
     key = _ingest.append_claim(
@@ -249,8 +254,7 @@ def get_claims(
     topic: str | None = None,
 ) -> tuple[ClaimView, ...]:
     """Read claims with derived status as of an inclusive event cutoff."""
-    if topic is not None:
-        _identifier(topic)
+    _optional_identifiers(topic)
     return tuple(
         _output(ClaimView, row)
         for row in _query.claims(
@@ -270,8 +274,7 @@ def check_integrity(
     """
     path = _path(database)
     pinned = _input(ChainAnchor, anchor) if anchor is not None else None
-    connection = _db.connect(path, readonly=True)
-    try:
+    with closing(_db.connect(path, readonly=True)) as connection:
         connection.execute("BEGIN")
         chain, first_broken = receipt_findings(connection)
         errors = evidence_errors(connection) | chain | relationship_errors(connection)
@@ -283,8 +286,6 @@ def check_integrity(
             errors=tuple(sorted(errors)),
             first_broken_sequence=first_broken,
         )
-    finally:
-        connection.close()
 
 
 @_boundary
@@ -294,11 +295,8 @@ def get_chain_head(database: str | Path) -> ChainHead:
     Reads only; it does not verify the chain. Pass the head back to
     `check_integrity(anchor=...)` later to detect rewrites or truncation.
     """
-    connection = _db.connect(_path(database), readonly=True)
-    try:
+    with closing(_db.connect(_path(database), readonly=True)) as connection:
         return _output(ChainHead, chain_head(connection))
-    finally:
-        connection.close()
 
 
 @_boundary
@@ -321,9 +319,7 @@ def get_evidence_links(
     through: int | None = None,
 ) -> tuple[EvidenceLinkView, ...]:
     """Read evidence assertions, filtered by claim, origin session or local order."""
-    for value in (claim_id, session):
-        if value is not None:
-            _identifier(value)
+    _optional_identifiers(claim_id, session)
     return tuple(
         _output(EvidenceLinkView, row)
         for row in _query.evidence_links(
@@ -345,9 +341,7 @@ def get_claim_relations(
     through: int | None = None,
 ) -> tuple[ClaimRelationView, ...]:
     """Read immutable newer-to-older assertions with both originating sessions."""
-    for value in (claim_id, target_id, session):
-        if value is not None:
-            _identifier(value)
+    _optional_identifiers(claim_id, target_id, session)
     return tuple(
         _output(ClaimRelationView, row)
         for row in _query.claim_relations(

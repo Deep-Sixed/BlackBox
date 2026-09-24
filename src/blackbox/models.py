@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 Text = Annotated[str, Field(min_length=1, max_length=2048)]
+# Newer-to-older relations a claim may assert on an existing claim.
+CLAIM_RELATIONS = ("supersedes", "contests", "retracts")
 
 # Defense in depth after shape validation. Never emit the rejected value.
 SUSPICIOUS = re.compile(
