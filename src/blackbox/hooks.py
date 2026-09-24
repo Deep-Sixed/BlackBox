@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 
 MAX_PAYLOAD_BYTES = 32 * 1024 * 1024
@@ -36,13 +37,26 @@ def read_payload(stream) -> tuple[bytes | None, str]:
     return None, digest.hexdigest()
 
 
-def oversized_request(content_digest: str, *, producer: str) -> dict:
+def oversized_requests(
+    content_digest: str, *, producer: str, git: bool = False
+) -> tuple[dict, dict | None, str | None]:
     """Record that an event arrived even though its payload was too large to parse.
 
     Dropping it would let an agent hide a tool result by making it huge. The
     event and tool names are unknown without parsing, so it is recorded under
-    its own name with the digest of every payload byte.
+    its own name with the digest of every payload byte. Whether it ended a turn
+    is unknown too, so with `git` it always gets a snapshot, of the directory the
+    host ran the hook in: skipping it would let an oversized turn-end event hide
+    the working tree.
     """
+    capture = oversized_request(content_digest, producer=producer)
+    if not git:
+        return capture, None, None
+    snapshot = {"request_id": capture["request_id"] + ":git", "producer": producer}
+    return capture, snapshot, os.getcwd()
+
+
+def oversized_request(content_digest: str, *, producer: str) -> dict:
     return {
         "request_id": f"oversized:{uuid.uuid4().hex}",
         "producer": producer,
