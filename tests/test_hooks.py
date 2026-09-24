@@ -2,11 +2,14 @@ import hashlib
 import json
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 import blackbox as bb
+import blackbox.cli as blackbox_cli
 from blackbox.api import _capture_host_report
+from blackbox.hooks import MAX_PAYLOAD_BYTES
 
 SESSION = "0f8e2c1a-5b6d-4e7f-8a9b-0c1d2e3f4a5b"
 
@@ -179,6 +182,36 @@ def test_invalid_payloads_fail_without_blocking_or_leaking(database, payload):
     assert (result.returncode, result.stdout) == (1, b"")
     assert json.loads(result.stderr) == {"error": "invalid_input", "retryable": False}
     assert b"abc" not in result.stderr
+
+
+
+def test_hook_stdin_read_is_bounded_before_validation(database, monkeypatch, capsys):
+    class Reader:
+        size = None
+
+        def read(self, size=-1):
+            self.size = size
+            return b"{}"
+
+    reader = Reader()
+    monkeypatch.setattr(
+        blackbox_cli.sys,
+        "stdin",
+        SimpleNamespace(buffer=reader),
+    )
+    args = SimpleNamespace(
+        database=database,
+        producer="claude-code",
+        git=False,
+    )
+    assert blackbox_cli.run_hook(args) == 1
+    assert reader.size == MAX_PAYLOAD_BYTES + 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err) == {
+        "error": "invalid_input",
+        "retryable": False,
+    }
 
 
 def test_hook_usage_errors_never_use_the_blocking_exit_code(database):

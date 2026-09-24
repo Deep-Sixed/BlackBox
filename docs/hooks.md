@@ -103,4 +103,6 @@ Stdout always stays empty, because Claude Code adds the stdout of
 
 Each hook starts a Python process and waits on the database's write lock, so
 parallel tool calls queue briefly. A lock held longer than five seconds fails
-that event with `database_busy`.
+that event with `database_busy`. Hook stdin is bounded before parsing: BlackBox
+reads at most 32 MiB plus one sentinel byte, and payloads over 32 MiB are rejected
+as invalid input rather than being buffered without limit.

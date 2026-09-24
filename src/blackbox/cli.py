@@ -19,7 +19,7 @@ from .api import (
     capture as capture_session,
 )
 from .errors import BlackBoxError, IntegrityError, SchemaError, ValidationError
-from .hooks import hook_requests
+from .hooks import MAX_PAYLOAD_BYTES, hook_requests
 
 
 def main() -> int:
@@ -145,7 +145,9 @@ def run_hook(args) -> int:
     try:
         try:
             event, git, repo = hook_requests(
-                sys.stdin.buffer.read(), producer=args.producer, git=args.git
+                sys.stdin.buffer.read(MAX_PAYLOAD_BYTES + 1),
+                producer=args.producer,
+                git=args.git,
             )
         except ValueError, TypeError, RecursionError:
             raise ValidationError() from None

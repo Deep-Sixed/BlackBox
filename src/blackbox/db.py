@@ -19,12 +19,25 @@ def now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
+def _verify_database_directory(path: Path) -> None:
+    """Require the immediate database directory to be private to this user."""
+
+    info = path.stat()
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is not None and info.st_uid != geteuid():
+        raise DatabaseIssue("database directory must be owned by the current user")
+    if info.st_mode & 0o022:
+        raise DatabaseIssue("database directory must not be group/other writable")
+
+
 def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
     path = Path(path).expanduser().absolute()
     if path.is_symlink():
         raise DatabaseIssue("database symlinks are not supported")
     if not readonly:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _verify_database_directory(path.parent)
+    if not readonly:
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:

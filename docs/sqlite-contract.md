@@ -5,7 +5,12 @@ BlackBox uses one private local SQLite database. The application ID is
 verifies on 3.14.5. Writers require WAL,
 `foreign_keys=ON`, `synchronous=FULL`, and a 5000 ms busy timeout. Database files
 are created with mode `0600`; writers reject existing files with group/other
-permissions and reject symlinks. SQLite manages WAL and shared-memory sidecars.
+permissions and reject symlinks. Every database open also requires the immediate
+parent directory to be owned by the current OS user and not writable by group or
+others; newly created parent directories use mode `0700`. This protects the
+database and SQLite WAL/shared-memory sidecars from other users with directory
+write access. It does not validate every ancestor path component; see the
+[threat model](threat-model.md). SQLite manages WAL and shared-memory sidecars.
 This durability contract depends on the filesystem and device honoring SQLite's
 locking and synchronization requests.
 

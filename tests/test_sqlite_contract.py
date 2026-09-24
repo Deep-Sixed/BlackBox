@@ -54,6 +54,45 @@ def test_valid_existing_database_keeps_required_pragmas(tmp_path, capture_reques
     assert integrity(database) == {"ok": True, "schema_version": VERSION, "errors": []}
 
 
+
+@pytest.mark.parametrize("readonly", [False, True])
+def test_database_directory_rejects_group_or_other_writes(tmp_path, readonly):
+    parent = tmp_path / "shared"
+    parent.mkdir()
+    database = parent / "blackbox.sqlite3"
+    if readonly:
+        connect(database).close()
+    parent.chmod(0o770)
+    try:
+        with pytest.raises(ValueError, match="database directory"):
+            connect(database, readonly=readonly)
+    finally:
+        parent.chmod(0o700)
+    if not readonly:
+        assert not database.exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX ownership check")
+def test_database_directory_must_be_owned_by_current_user(tmp_path, monkeypatch):
+    parent = tmp_path / "owned-elsewhere"
+    parent.mkdir()
+    database = parent / "blackbox.sqlite3"
+    real_uid = os.geteuid()
+    monkeypatch.setattr(os, "geteuid", lambda: real_uid + 1)
+    with pytest.raises(ValueError, match="owned by the current user"):
+        connect(database)
+    assert not database.exists()
+
+
+def test_database_directory_may_be_world_readable_but_not_writable(tmp_path):
+    parent = tmp_path / "readable"
+    parent.mkdir()
+    parent.chmod(0o755)
+    database = parent / "blackbox.sqlite3"
+    connect(database).close()
+    assert database.stat().st_mode & 0o777 == 0o600
+
+
 def test_wrong_application_id_is_rejected(tmp_path):
     database = tmp_path / "wrong-app.sqlite3"
     connection = sqlite3.connect(database)
