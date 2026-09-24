@@ -31,6 +31,7 @@ beyond making tampering *detectable*, and then only in the ways listed below.
 | Reusing a request ID for different input | The session fingerprint binds the ID to its input | `ConflictError`; nothing is overwritten |
 | A caller claiming observer or host authority, for example by naming its source `blackbox.git` | Authority comes from the code path, not the name: `capture` input is always `caller_asserted`/`unverified`; only `blackbox hook` records `host_reported` | cannot be expressed through `capture` |
 | An observed repository running a `core.fsmonitor` hook, or redirecting the observer through inherited `GIT_*` variables | Git runs with `-c core.fsmonitor=false` and a scrubbed environment | not executed |
+| An observed partial clone running a repository-configured command (`remote.*.uploadpack`, `core.sshCommand`, an `ext::` URL or a remote helper) by making Git lazily fetch a missing object | Git runs with an empty `GIT_ALLOW_PROTOCOL`, which refuses every transport and outranks `protocol.*.allow` in repository config, and with `GIT_NO_LAZY_FETCH=1` | not executed; the snapshot fails with a retryable `ObservationError` |
 | An observed repository substituting commits through `refs/replace/` (`git replace`), so a replaced baseline or `HEAD` hides committed or staged changes | Git runs with `--no-replace-objects`, so diffs always use the named commits' real trees | changes reported |
 | An observed repository hiding a submodule commit change through `diff.ignoreSubmodules` or a `.gitmodules` `ignore` setting | Committed and staged deltas compare raw commit-tree and index mode/object entries instead of using Git's diff policy | changes reported |
 | An observed repository hiding an executable-bit change through `core.fileMode=false` | The setting is not read: the raw executable bit is always compared with the index mode | change reported |
@@ -84,9 +85,10 @@ ordinary text.
   the observer", not as proof of what the agent did.
 - **Other repository configuration.** The Git observer still honours the
   observed repository's config for the commands it runs (`rev-parse`, `branch`,
-  `ls-files`, `ls-tree` and `diff-index --cached`). None of these are known to run configured
-  programs or read working-tree file contents. A Git feature that does
-  would reopen this surface. Full isolation means running the observer in a
+  `ls-files`, `ls-tree` and `diff-index --cached`). Apart from lazy fetching in
+  a partial clone, which is now blocked (see Defended), none of these are known
+  to run configured programs or read working-tree file contents. A Git feature
+  that does would reopen this surface. Full isolation means running the observer in a
   sandbox (see production gaps).
 - **A working tree changing during capture.** A snapshot reads HEAD, the index
   and the working tree separately. If HEAD or the index entries change before the
@@ -112,7 +114,7 @@ ordinary text.
   `hook --git` can add noticeable turn-end latency. This is the deliberate
   availability/performance cost of the stronger observation rule.
 - **Submodule contents.** A submodule counts as changed only when a different
-  commit is checked out. Uncommitted edits inside a submodule are not observed,
+  commit is checked out or the path is no longer a directory. Uncommitted edits inside a submodule are not observed,
   because inspecting them would mean running Git in that repository's working
   tree.
 - **Wall-clock trust.** `recorded_at` is the local clock at write time. It is

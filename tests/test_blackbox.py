@@ -476,6 +476,74 @@ def test_submodule_counts_as_changed_only_on_a_different_commit(repo, tmp_path):
     assert collect_git(root)["unstaged_delta"] == ["sub"]
 
 
+@pytest.mark.parametrize("replacement", ["file", "symlink"])
+def test_submodule_replaced_by_a_non_directory_counts_as_changed(repo, replacement):
+    root, git = repo
+    head = git("rev-parse", "HEAD")
+    git("update-index", "--add", "--cacheinfo", f"160000,{head},sub")
+    git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "add gitlink",
+    )
+    (root / "sub").mkdir()  # uninitialized submodule: unchanged, as in Git
+    assert collect_git(root)["unstaged_delta"] == []
+    (root / "sub").rmdir()
+    if replacement == "file":
+        (root / "sub").write_text("not a submodule\n")
+    else:
+        (root / "sub").symlink_to("tracked.txt")
+    assert git("status", "--porcelain") == "T sub"
+    result = collect_git(root)
+    assert result["unstaged_delta"] == result["working_tree_delta"] == ["sub"]
+
+
+def test_missing_objects_are_never_fetched_through_repository_commands(tmp_path):
+    # In a partial clone Git fetches a missing object from the promisor remote,
+    # running the repository's configured upload-pack command to do it.
+    server = tmp_path / "server"
+    subprocess.run(["git", "init", "-q", str(server)], check=True)
+    (server / "d").mkdir()
+    (server / "d" / "f").write_text("f\n")
+    serve = ["git", "-C", str(server)]
+    subprocess.run([*serve, "add", "."], check=True)
+    subprocess.run(
+        [*serve, "-c", "user.name=Test", "-c", "user.email=test@example.invalid"]
+        + ["commit", "-qm", "server"],
+        check=True,
+    )
+    subprocess.run([*serve, "config", "uploadpack.allowFilter", "true"], check=True)
+    client = tmp_path / "client"
+    subprocess.run(
+        ["git", "clone", "-q", "--filter=tree:0", "--no-checkout"]
+        + [server.as_uri(), str(client)],
+        check=True,
+    )
+    marker = tmp_path / "marker"
+    command = tmp_path / "upload-pack"
+    command.write_text(f'#!/bin/sh\ntouch "{marker}"\nexec git-upload-pack "$@"\n')
+    command.chmod(0o755)
+    configure = ["git", "-C", str(client), "config"]
+    subprocess.run([*configure, "remote.origin.uploadpack", str(command)], check=True)
+    # The repository may also try to re-allow transports for itself.
+    subprocess.run([*configure, "protocol.allow", "always"], check=True)
+    subprocess.run([*configure, "protocol.file.allow", "always"], check=True)
+    with pytest.raises(ValueError):
+        collect_git(client)
+    assert not marker.exists()
+    # Plain Git runs the command: the setup is a real execution route.
+    subprocess.run(
+        ["git", "-C", str(client), "ls-tree", "-r", "HEAD"],
+        check=True,
+        capture_output=True,
+    )
+    assert marker.exists()
+
+
 def git_diff_names(root):
     listing = subprocess.check_output(
         ["git", "-C", str(root), "diff", "--name-only", "-z"]

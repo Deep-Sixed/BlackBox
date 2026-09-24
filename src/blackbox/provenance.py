@@ -43,6 +43,14 @@ def environment() -> dict[str, str]:
     # Observation must not write the observed repository's index.
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env["GIT_TERMINAL_PROMPT"] = "0"
+    # Never contact a remote. In a partial clone, reading a missing object makes
+    # Git fetch it from the promisor remote, running whatever the repository
+    # configures for that (`remote.*.uploadpack`, `core.sshCommand`, an `ext::`
+    # URL or a remote helper). An empty protocol allow-list refuses every
+    # transport and outranks any `protocol.*.allow` in repository config; Git
+    # 2.44+ also skips the fetch attempt itself. The read then fails instead.
+    env["GIT_ALLOW_PROTOCOL"] = ""
+    env["GIT_NO_LAZY_FETCH"] = "1"
     return env
 
 
@@ -208,9 +216,13 @@ def entry_changed(
     kind = mode & 0o170000
     if kind == 0o160000:
         # A submodule counts as changed only when a different commit is checked
-        # out; its own working tree is not inspected.
+        # out, or when something other than a directory replaced it; its own
+        # working tree is not inspected. A directory without `.git` is an
+        # uninitialized submodule, which Git also treats as unchanged.
+        if not stat.S_ISDIR(info.st_mode):
+            return True
         location = os.fsencode(root) + b"/" + path
-        if not stat.S_ISDIR(info.st_mode) or not os.path.lexists(location + b"/.git"):
+        if not os.path.lexists(location + b"/.git"):
             return False
         try:
             checked_out = git(

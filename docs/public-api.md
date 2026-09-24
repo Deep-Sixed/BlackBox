@@ -38,7 +38,10 @@ observation are redacted instead of rejecting the whole snapshot, and an
 oversized hook payload still gets a `--git` snapshot (see [hooks](hooks.md)).
 Package 0.6.8 keeps schema v4; a hook payload that cannot be recorded as a named
 event is recorded by digest instead of dropped, and a Git snapshot is no longer
-refused when the index file is only rewritten to refresh cached stat data.
+refused when the index file is only rewritten to refresh cached stat data. The
+Git observer never contacts a remote, so a partial clone cannot make it run a
+repository-configured fetch command, and a submodule replaced by a file or
+symlink counts as changed (below).
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -131,7 +134,11 @@ The public Pydantic result models are frozen and their collections are tuples:
   a path under a symlinked or non-directory parent counts as deleted
   (the symlink is never followed), a sparse-checkout (skip-worktree) path counts
   only if it is present and differs, and a submodule without a checked-out
-  commit counts as changed rather than failing the capture. Since 0.6.4 the
+  commit counts as changed rather than failing the capture. Since 0.6.8 a
+  submodule path replaced by a file or symlink counts as changed, as in Git; an
+  empty directory (an uninitialized submodule) still does not. In a partial
+  clone, a snapshot that needs an object the clone never fetched fails with
+  `ObservationError` instead of fetching it. Since 0.6.4 the
   executable bit is compared even when the repository sets `core.fileMode=false`,
   so on a filesystem without executable bits every non-executable file may count
   as changed, and `committed_delta` and `staged_delta` include submodule commit
