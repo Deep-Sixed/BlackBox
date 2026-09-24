@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.6.7
+# Supported public API — BlackBox 0.6.8
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -36,6 +36,9 @@ setting can no longer hide untracked files (below).
 Package 0.6.7 keeps schema v4; credential-shaped path and branch names in a Git
 observation are redacted instead of rejecting the whole snapshot, and an
 oversized hook payload still gets a `--git` snapshot (see [hooks](hooks.md)).
+Package 0.6.8 keeps schema v4; a hook payload that cannot be recorded as a named
+event is recorded by digest instead of dropped, and a Git snapshot is no longer
+refused when the index file is only rewritten to refresh cached stat data.
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -184,8 +187,10 @@ Busy means SQLite lock contention. Conflicting request reuse or a second
 superseding claim is a nonretryable conflict. An observer failure can be retried
 with the same request after the local observation problem is resolved; the existing
 durable reservation/failure history remains. A Git snapshot whose HEAD or index
-file changes while it is taken fails this way, since its staged and unstaged
-reads would describe different moments.
+entries change while it is taken fails this way, since its staged and unstaged
+reads would describe different moments. Since 0.6.8 only the entries count (path,
+mode, object ID, stage and the intent-to-add flag): an index file rewritten just
+to refresh cached stat data, as `git status` does, no longer fails the snapshot.
 Since 0.6.7, a path or branch name in a Git observation that looks like a
 credential is replaced by the marker `[redacted: credential-shaped name]`, one
 marker per replaced entry, and the rest of the snapshot is recorded. Before, the

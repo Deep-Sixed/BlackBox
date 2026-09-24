@@ -64,7 +64,8 @@ contents are only hashed. Someone who kept a copy of the payload can check it
 against `content_digest`; nothing else can be recovered from it. Because only
 the digest is stored, a payload containing credential-shaped text is still
 recorded. The credential filter applies to the stored fields (event name, tool
-name, session ID); a tool name that looks like a credential is rejected.
+name, session ID); an event whose tool name looks like a credential is
+recorded by digest only (below).
 
 A payload larger than 32 MiB is not parsed, but it is still recorded: since
 0.6.3, `blackbox hook` reads at most that much into memory, hashes the rest as it
@@ -76,6 +77,15 @@ might have ended a turn, and skipping it would let an oversized turn-end event
 hide the working tree.
 Before 0.6.3 such an event was rejected as `invalid_input` and not recorded at
 all, so an agent could hide a tool result by making it huge.
+
+Since 0.6.8 the same holds for a payload that is not too large but cannot be
+recorded as a named event: one that is not JSON, nests deeper than the parser
+follows (the agent writes tool inputs, so it can shape one this way), lacks a
+required field, or carries a name the credential filter rejects. It is
+recorded as an `UnreadableHookPayload` observation with the digest of every
+payload byte, gets a `--git` snapshot like an oversized one, and the hook
+then exits 1 with `invalid_input` so a misconfigured host is still noticed.
+Before 0.6.8 such a payload was rejected and left no record.
 
 Redelivering the same tool event is a duplicate, not a second record. The same
 tool-use ID with different payload bytes is a `conflict`. Events without a host

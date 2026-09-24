@@ -19,7 +19,7 @@ from .api import (
     capture as capture_session,
 )
 from .errors import BlackBoxError, IntegrityError, SchemaError, ValidationError
-from .hooks import hook_requests, oversized_requests, read_payload
+from .hooks import digest_only_requests, hook_requests, read_payload
 from .models import CLAIM_RELATIONS
 
 
@@ -145,20 +145,30 @@ def run_hook(args) -> int:
     """
     try:
         raw, content_digest = read_payload(sys.stdin.buffer)
-        if raw is None:
-            event, git, repo = oversized_requests(
-                content_digest, producer=args.producer, git=args.git
-            )
-        else:
+        # A payload that cannot be recorded by name is still recorded by digest:
+        # dropping it would let the agent hide a tool call by shaping its payload.
+        reason = "oversized" if raw is None else None
+        if reason is None:
             try:
                 event, git, repo = hook_requests(
                     raw, producer=args.producer, git=args.git
                 )
             except ValueError, TypeError, RecursionError:
-                raise ValidationError() from None
-        _capture_host_report(args.database, event)
+                reason = "unreadable"
+            else:
+                try:
+                    _capture_host_report(args.database, event)
+                except ValidationError:
+                    reason = "unreadable"
+        if reason is not None:
+            event, git, repo = digest_only_requests(
+                reason, content_digest, producer=args.producer, git=args.git
+            )
+            _capture_host_report(args.database, event)
         if git is not None:
             capture_session(args.database, git, repo=repo)
+        if reason == "unreadable":
+            raise ValidationError()
     except BlackBoxError as error:
         result = {"error": error.code, "retryable": error.retryable}
         print(json.dumps(result, sort_keys=True), file=sys.stderr)

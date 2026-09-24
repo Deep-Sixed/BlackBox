@@ -41,6 +41,7 @@ beyond making tampering *detectable*, and then only in the ways listed below.
 | An observed repository hiding edits behind a `skip-worktree` flag | The flag is honoured only for files absent from disk (sparse checkout); a present file is hashed like any other | edit reported |
 | An observed repository steering the observer's reads, by replacing a directory with a symlink out of the repository or a file with a FIFO | Working-tree paths are opened one directory handle at a time with `O_NOFOLLOW` and `O_NONBLOCK`; symlinked parents are never followed, and only regular files are read | path reported deleted or changed; capture does not block |
 | An agent skipping or suppressing its own reports | With [host hooks](hooks.md), the host runtime reports each prompt, tool call and turn end; the agent is not involved | `host_reported` records, evidence still `unverified` |
+| An agent hiding a tool call by shaping its hook payload: making it huge, nesting a tool input deeper than the parser follows, or otherwise making it unreadable as an event | A payload that cannot be recorded by name is recorded by the digest of every byte (`OversizedHookPayload`, `UnreadableHookPayload`), with a `--git` snapshot | event recorded; names unknown |
 | The recorder blocking or steering the observed agent | `blackbox hook` never exits 2 (the hook "block" code) and never writes to stdout, which some hooks feed back to the agent | cannot block |
 | Other local users reading or replacing the database file | Created `0600`; writers refuse wider permissions and symlinks. Writers and readers refuse a database directory other users own or can write, checking every directory and symlink on the path as written (a directory on the way may be shared only with the sticky bit, and then each symlink in it must be the user's own), since directory write access allows replacement or a planted WAL sidecar whatever the file's mode | `DatabaseError` |
 | Secrets entering the store or leaking through errors | Inputs pass a credential-shape filter; observed Git path and branch names matching it are redacted (a marker, no hash, since a short secret would be guessable); public errors are fixed codes with no input, path or exception text | `ValidationError`; redaction marker |
@@ -88,7 +89,7 @@ ordinary text.
   would reopen this surface. Full isolation means running the observer in a
   sandbox (see production gaps).
 - **A working tree changing during capture.** A snapshot reads HEAD, the index
-  and the working tree separately. If HEAD or the index file changes before the
+  and the working tree separately. If HEAD or the index entries change before the
   snapshot finishes, it is refused with a retryable error rather than recorded,
   so a change staged mid-capture cannot fall between the staged and unstaged
   reads. Working-tree files are hashed one at a time, though, and are not

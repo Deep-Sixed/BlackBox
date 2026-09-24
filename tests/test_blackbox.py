@@ -870,6 +870,45 @@ def test_index_change_during_capture_is_refused(repo, monkeypatch):
         collect_git(root)
 
 
+def test_stat_only_index_refresh_during_capture_is_not_movement(repo, monkeypatch):
+    root, git = repo
+    module = importlib.import_module("blackbox.provenance")
+    original = module.unstaged_paths
+    index = root / ".git" / "index"
+
+    def refresh_in_between(path):
+        # An IDE or shell prompt running `git status` rewrites the index to
+        # refresh cached stat data, without changing any entry.
+        before = index.read_bytes()
+        stamp = (root / "tracked.txt").stat().st_mtime + 5
+        os.utime(root / "tracked.txt", (stamp, stamp))
+        git("status", "--porcelain")
+        assert index.read_bytes() != before
+        return original(path)
+
+    monkeypatch.setattr(module, "unstaged_paths", refresh_in_between)
+    result = collect_git(root)
+    assert result["staged_delta"] == result["unstaged_delta"] == []
+
+
+def test_intent_to_add_becoming_staged_during_capture_is_refused(repo, monkeypatch):
+    root, git = repo
+    (root / "empty").write_text("")
+    git("add", "-N", "empty")
+    module = importlib.import_module("blackbox.provenance")
+    original = module.unstaged_paths
+
+    def stage_in_between(path):
+        # The index still holds the same empty blob; only the intent-to-add
+        # flag clears, which would otherwise leave `empty` in neither delta.
+        git("add", "empty")
+        return original(path)
+
+    monkeypatch.setattr(module, "unstaged_paths", stage_in_between)
+    with pytest.raises(ValueError, match="index changed"):
+        collect_git(root)
+
+
 def test_unchanged_index_is_not_mistaken_for_movement(repo):
     root, git = repo
     (root / "tracked.txt").write_text("staged\n")

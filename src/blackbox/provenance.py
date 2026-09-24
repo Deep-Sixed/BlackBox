@@ -383,28 +383,6 @@ def untracked_paths(root: Path) -> list[str]:
     return sorted(visible | gitignores)
 
 
-def index_fingerprint(root: Path) -> str | None:
-    """SHA-256 of the index file, or None when there is none yet.
-
-    Staged and unstaged changes come from separate reads of the index; if it
-    changed in between, a change staged in that window would be in neither.
-    """
-    location = git(root, "rev-parse", "--git-path", "index", work_tree=root)
-    try:
-        handle = os.open(root / os.fsdecode(location.rstrip(b"\n")), OPEN_FILE)
-    except FileNotFoundError:
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(handle).st_mode):
-            raise ValueError("Git index is not a regular file")
-        digest = hashlib.sha256()
-        for chunk in read_chunks(handle):
-            digest.update(chunk)
-        return digest.hexdigest()
-    finally:
-        os.close(handle)
-
-
 # Stands in for a path or branch name that looks like a credential. Rejecting the
 # whole snapshot instead would let the observed actor blind the observer with one
 # file named, say, `token=1`. No hash is kept: a short secret would be guessable.
@@ -432,7 +410,6 @@ def redact(result: dict) -> dict:
 def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     location = Path(repo).expanduser().resolve()
     root = repository_root(location)
-    index = index_fingerprint(root)
     head = text(root, "rev-parse", "--verify", "HEAD^{commit}")
     before = None
     if baseline is not None:
@@ -441,7 +418,8 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
             raise ValueError("baseline must be a full commit object ID")
         before = text(root, "rev-parse", "--verify", baseline + "^{commit}")
     head_entries = tree_entries(root, head)
-    indexed, unmerged = index_entries(root, head)
+    index = index_entries(root, head)
+    indexed, unmerged = index
     staged = entry_delta(head_entries, indexed, always=unmerged)
     unstaged = unstaged_paths(root)
     result = {
@@ -458,7 +436,11 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     }
     if text(root, "rev-parse", "HEAD") != head:
         raise ValueError("Git HEAD changed during capture; retry")
-    if index_fingerprint(root) != index:
+    # Staged and unstaged changes come from separate reads of the index; if its
+    # entries changed in between, a change staged in that window would be in
+    # neither. Compare entries, not the file: `git status` from an IDE or shell
+    # prompt rewrites the index to refresh cached stat data alone.
+    if index_entries(root, head) != index:
         raise ValueError("Git index changed during capture; retry")
     result = redact(result)
     try:

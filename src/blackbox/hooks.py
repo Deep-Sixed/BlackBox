@@ -19,6 +19,10 @@ TOOL_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
 # Events after which the working tree is worth an independent Git snapshot.
 TURN_END_EVENTS = ("Stop", "SubagentStop", "SessionEnd")
 COMMAND_TOOLS = ("Bash",)
+DIGEST_ONLY_NAMES = {
+    "oversized": "OversizedHookPayload",
+    "unreadable": "UnreadableHookPayload",
+}
 
 
 def read_payload(stream) -> tuple[bytes | None, str]:
@@ -37,38 +41,36 @@ def read_payload(stream) -> tuple[bytes | None, str]:
     return None, digest.hexdigest()
 
 
-def oversized_requests(
-    content_digest: str, *, producer: str, git: bool = False
+def digest_only_requests(
+    reason: str, content_digest: str, *, producer: str, git: bool = False
 ) -> tuple[dict, dict | None, str | None]:
-    """Record that an event arrived even though its payload was too large to parse.
+    """Record that an event arrived even though it could not be recorded by name.
 
-    Dropping it would let an agent hide a tool result by making it huge. The
-    event and tool names are unknown without parsing, so it is recorded under
-    its own name with the digest of every payload byte. Whether it ended a turn
-    is unknown too, so with `git` it always gets a snapshot, of the directory the
-    host ran the hook in: skipping it would let an oversized turn-end event hide
-    the working tree.
+    `reason` is `oversized` for a payload too large to parse and `unreadable` for
+    one that does not parse into a valid event. Dropping either would let an
+    agent hide a tool call by making its payload huge or, for example, nested
+    deeper than the parser follows. The event and tool names are unknown, so the
+    event is recorded under its own name with the digest of every payload byte.
+    Whether it ended a turn is unknown too, so with `git` it always gets a
+    snapshot, of the directory the host ran the hook in: skipping it would let
+    such an event hide the working tree.
     """
-    capture = oversized_request(content_digest, producer=producer)
-    if not git:
-        return capture, None, None
-    snapshot = {"request_id": capture["request_id"] + ":git", "producer": producer}
-    return capture, snapshot, os.getcwd()
-
-
-def oversized_request(content_digest: str, *, producer: str) -> dict:
-    return {
-        "request_id": f"oversized:{uuid.uuid4().hex}",
+    capture = {
+        "request_id": f"{reason}:{uuid.uuid4().hex}",
         "producer": producer,
         "observations": [
             {
                 "source": producer,
                 "kind": "activity",
-                "name": "OversizedHookPayload",
+                "name": DIGEST_ONLY_NAMES[reason],
                 "content_digest": content_digest,
             }
         ],
     }
+    if not git:
+        return capture, None, None
+    snapshot = {"request_id": capture["request_id"] + ":git", "producer": producer}
+    return capture, snapshot, os.getcwd()
 
 
 def _text(payload: dict, key: str) -> str:
