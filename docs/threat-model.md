@@ -38,7 +38,7 @@ beyond making tampering *detectable*, and then only in the ways listed below.
 | An observed repository steering the observer's reads, by replacing a directory with a symlink out of the repository or a file with a FIFO | Working-tree paths are opened one directory handle at a time with `O_NOFOLLOW` and `O_NONBLOCK`; symlinked parents are never followed, and only regular files are read | path reported deleted or changed; capture does not block |
 | An agent skipping or suppressing its own reports | With [host hooks](hooks.md), the host runtime reports each prompt, tool call and turn end; the agent is not involved | `host_reported` records, evidence still `unverified` |
 | The recorder blocking or steering the observed agent | `blackbox hook` never exits 2 (the hook "block" code) and never writes to stdout, which some hooks feed back to the agent | cannot block |
-| Other local users reading or replacing the database file | Created `0600`; writers refuse wider permissions and symlinks | `DatabaseError` |
+| Other local users reading or replacing the database file | Created `0600`; writers refuse wider permissions and symlinks, and a database directory other users own or can write (an ancestor only if it lacks the sticky bit), since directory write access allows replacement or a planted WAL sidecar whatever the file's mode | `DatabaseError` |
 | Secrets entering the store or leaking through errors | Inputs and observed Git metadata pass a credential-shape filter; public errors are fixed codes with no input, path or exception text | `ValidationError`, `ObservationRejectedError` |
 
 The credential filter is a pattern heuristic that rejects common token, key and
