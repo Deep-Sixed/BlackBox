@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from ._signals import EvidenceIssue, MissingRecord
@@ -10,10 +11,16 @@ from .ingest import state
 from .integrity import evidence_errors, record_errors, relationship_errors
 from .schema import VERSION
 
+# A claim's status comes from the first relation, in this order, that targets it.
+STATUS_PRECEDENCE = (
+    ("retracts", "retracted"),
+    ("supersedes", "superseded"),
+    ("contests", "contested"),
+)
+
 
 def reconstruct(database: str | Path, session: str) -> dict:
-    connection = connect(database, readonly=True)
-    try:
+    with closing(connect(database, readonly=True)) as connection:
         connection.execute("BEGIN")
         row = connection.execute(
             "SELECT * FROM sessions WHERE id=?", (session,)
@@ -58,13 +65,10 @@ def reconstruct(database: str | Path, session: str) -> dict:
             except ValueError, TypeError:
                 raise EvidenceIssue("invalid stored observation") from None
         return result
-    finally:
-        connection.close()
 
 
 def timeline(database: str | Path, *, through: int | None = None) -> list[dict]:
-    connection = connect(database, readonly=True)
-    try:
+    with closing(connect(database, readonly=True)) as connection:
         return [
             dict(row)
             for row in connection.execute(
@@ -72,15 +76,12 @@ def timeline(database: str | Path, *, through: int | None = None) -> list[dict]:
                 (through, through),
             )
         ]
-    finally:
-        connection.close()
 
 
 def claims(
     database: str | Path, *, through: int | None = None, topic: str | None = None
 ) -> list[dict]:
-    connection = connect(database, readonly=True)
-    try:
+    with closing(connect(database, readonly=True)) as connection:
         rows = [
             dict(row)
             for row in connection.execute(
@@ -91,24 +92,20 @@ def claims(
                 (through, through),
             )
         ]
-        superseded = {
-            row["target_id"] for row in rows if row["relation"] == "supersedes"
+        targets = {
+            relation: {row["target_id"] for row in rows if row["relation"] == relation}
+            for relation, _ in STATUS_PRECEDENCE
         }
-        contested = {row["target_id"] for row in rows if row["relation"] == "contests"}
-        retracted = {row["target_id"] for row in rows if row["relation"] == "retracts"}
         for row in rows:
-            row["status"] = (
-                "retracted"
-                if row["id"] in retracted
-                else "superseded"
-                if row["id"] in superseded
-                else "contested"
-                if row["id"] in contested
-                else "active"
+            row["status"] = next(
+                (
+                    status
+                    for relation, status in STATUS_PRECEDENCE
+                    if row["id"] in targets[relation]
+                ),
+                "active",
             )
         return [row for row in rows if topic is None or row["topic"] == topic]
-    finally:
-        connection.close()
 
 
 def integrity(database: str | Path) -> dict:
@@ -133,8 +130,7 @@ def integrity(database: str | Path) -> dict:
 
 
 def evidence_links(database, *, claim_id=None, session=None, through=None):
-    connection = connect(database, readonly=True)
-    try:
+    with closing(connect(database, readonly=True)) as connection:
         return [
             dict(row)
             for row in connection.execute(
@@ -148,15 +144,12 @@ def evidence_links(database, *, claim_id=None, session=None, through=None):
                 (claim_id, claim_id, session, session, through, through),
             )
         ]
-    finally:
-        connection.close()
 
 
 def claim_relations(
     database, *, claim_id=None, target_id=None, session=None, through=None
 ):
-    connection = connect(database, readonly=True)
-    try:
+    with closing(connect(database, readonly=True)) as connection:
         return [
             dict(row)
             for row in connection.execute(
@@ -179,5 +172,3 @@ def claim_relations(
                 ),
             )
         ]
-    finally:
-        connection.close()

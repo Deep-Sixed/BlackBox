@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import subprocess
+from contextlib import closing
 from pathlib import Path
 
 from ._signals import (
@@ -15,8 +16,8 @@ from ._signals import (
     RequestConflict,
 )
 from .db import connect, now, transaction
-from .integrity import append_receipt
-from .models import Capture, Claim, EvidenceLink, canonical, identity
+from .integrity import LINK_RECORD_COLUMNS, append_receipt
+from .models import CLAIM_RELATIONS, Capture, Claim, EvidenceLink, canonical, identity
 from .provenance import collect_git
 
 LIFECYCLE = ("RESERVED", "COMMITTED", "FAILED_RETRYABLE")
@@ -42,6 +43,14 @@ def state(connection, session: str) -> str | None:
         (session, *LIFECYCLE),
     ).fetchone()
     return row[0] if row else None
+
+
+def require_committed(connection, session: str, action: str) -> None:
+    current = state(connection, session)
+    if current is None:
+        raise MissingRecord("unknown session")
+    if current != "COMMITTED":
+        raise RequestConflict(f"{action} requires a committed session")
 
 
 def source(connection, session: str, name: str, authority: str) -> str:
@@ -160,8 +169,7 @@ def ingest(
     fingerprint = identity("input", [*material, "host_reported"] if host else material)
     authority = "host_reported" if host else "caller_asserted"
     session = identity("ses", capture.request_id)
-    connection = connect(database)
-    try:
+    with closing(connect(database)) as connection:
         with transaction(connection):
             existing = connection.execute(
                 "SELECT fingerprint FROM sessions WHERE id=?", (session,)
@@ -230,23 +238,20 @@ def ingest(
                     failure_event = event(
                         connection, session, "FAILED_RETRYABLE", session
                     )
+                    failure_id = identity("fail", failure_event)
                     connection.execute(
                         "INSERT INTO failures VALUES (?,?,?,?,?)",
                         (
-                            identity("fail", failure_event),
+                            failure_id,
                             session,
                             failure_event,
                             "CAPTURE_FAILED",
                             failure_retryable,
                         ),
                     )
-                    append_receipt(
-                        connection, "failures", identity("fail", failure_event)
-                    )
+                    append_receipt(connection, "failures", failure_id)
             raise
         return {"session_id": session, "status": "COMMITTED", "duplicate": False}
-    finally:
-        connection.close()
 
 
 def append_claim(
@@ -262,76 +267,58 @@ def append_claim(
     )
     if (target is None) != (relation is None) or relation not in (
         None,
-        "supersedes",
-        "contests",
-        "retracts",
+        *CLAIM_RELATIONS,
     ):
         raise ValueError("correction requires a target and supported relation")
-    connection = connect(database)
-    try:
-        with transaction(connection):
-            current = state(connection, session)
-            if current is None:
-                raise MissingRecord("unknown session")
-            if current != "COMMITTED":
-                raise RequestConflict("claim requires a committed session")
-            return claim_row(connection, session, claim, target, relation)
-    finally:
-        connection.close()
+    with closing(connect(database)) as connection, transaction(connection):
+        require_committed(connection, session, "claim")
+        return claim_row(connection, session, claim, target, relation)
 
 
 def link_evidence(database, session, link: EvidenceLink):
-    connection = connect(database)
-    try:
-        with transaction(connection):
-            current = state(connection, session)
-            if current is None:
-                raise MissingRecord("unknown session")
-            if current != "COMMITTED":
-                raise RequestConflict("link requires a committed session")
-            table = {
-                "observation": "observations",
-                "evidence": "evidence",
-                "artifact": "artifacts",
-            }[link.record_type]
-            for name, key in (
-                ("claims", link.claim_id),
-                (table, link.evidence_record_id),
+    with closing(connect(database)) as connection, transaction(connection):
+        require_committed(connection, session, "link")
+        table = {
+            "observation": "observations",
+            "evidence": "evidence",
+            "artifact": "artifacts",
+        }[link.record_type]
+        for name, key in (
+            ("claims", link.claim_id),
+            (table, link.evidence_record_id),
+        ):
+            if (
+                connection.execute(
+                    f"SELECT 1 FROM {name} WHERE id=?", (key,)
+                ).fetchone()
+                is None
             ):
-                if (
-                    connection.execute(
-                        f"SELECT 1 FROM {name} WHERE id=?", (key,)
-                    ).fetchone()
-                    is None
-                ):
-                    raise MissingRecord("unknown link reference")
-            key = identity("link", [session, link.model_dump()])
-            if connection.execute(
-                "SELECT 1 FROM evidence_links WHERE id=?", (key,)
-            ).fetchone():
-                return key
-            source_id = source(connection, session, link.source, "caller_asserted")
-            event_id = event(connection, session, "EVIDENCE_LINK", key)
-            timestamp = connection.execute(
-                "SELECT recorded_at FROM events WHERE id=?", (event_id,)
-            ).fetchone()[0]
-            connection.execute(
-                "INSERT INTO evidence_links VALUES (?,?,?,?,?,?,?,?,?)",
-                (
-                    key,
-                    session,
-                    source_id,
-                    link.claim_id,
-                    link.evidence_record_id
-                    if link.record_type == "observation"
-                    else None,
-                    link.evidence_record_id if link.record_type == "evidence" else None,
-                    link.evidence_record_id if link.record_type == "artifact" else None,
-                    link.relation,
-                    timestamp,
-                ),
-            )
-            append_receipt(connection, "evidence_links", key)
+                raise MissingRecord("unknown link reference")
+        key = identity("link", [session, link.model_dump()])
+        if connection.execute(
+            "SELECT 1 FROM evidence_links WHERE id=?", (key,)
+        ).fetchone():
             return key
-    finally:
-        connection.close()
+        source_id = source(connection, session, link.source, "caller_asserted")
+        event_id = event(connection, session, "EVIDENCE_LINK", key)
+        timestamp = connection.execute(
+            "SELECT recorded_at FROM events WHERE id=?", (event_id,)
+        ).fetchone()[0]
+        connection.execute(
+            "INSERT INTO evidence_links VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                key,
+                session,
+                source_id,
+                link.claim_id,
+                # Exactly one target column holds the record; the rest stay NULL.
+                *(
+                    link.evidence_record_id if kind == link.record_type else None
+                    for kind, _ in LINK_RECORD_COLUMNS
+                ),
+                link.relation,
+                timestamp,
+            ),
+        )
+        append_receipt(connection, "evidence_links", key)
+        return key
