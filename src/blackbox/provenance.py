@@ -15,7 +15,7 @@ import subprocess
 from pathlib import Path
 
 from ._signals import ObservationRejected
-from .models import safe_strings
+from .models import FULL_COMMIT_ID, safe_strings
 
 # The observed repository's own config and refs are controlled by the observed
 # actor. Command-line options outrank them: never run its fsmonitor hook, which
@@ -46,9 +46,7 @@ def environment() -> dict[str, str]:
     return env
 
 
-def git(
-    repo: Path, *args: str, work_tree: Path | None = None
-) -> bytes:
+def git(repo: Path, *args: str, work_tree: Path | None = None) -> bytes:
     command = ["git", *HARDENED_CONFIG, "-C", str(repo)]
     if work_tree is not None:
         # Command-line --work-tree outranks an observed repository's core.worktree.
@@ -65,16 +63,25 @@ def git(
     return result.stdout
 
 
-def paths(
-    repo: Path, *args: str, work_tree: Path | None = None
-) -> list[str]:
-    return sorted(
-        {
-            p.decode("utf-8", "surrogateescape")
-            for p in git(repo, *args, work_tree=work_tree).split(b"\0")
-            if p
-        }
-    )
+def text(root: Path, *args: str) -> str:
+    """One line of Git output for a command run against the worktree root."""
+    return git(root, *args, work_tree=root).decode().strip()
+
+
+def paths(repo: Path, *args: str, work_tree: Path | None = None) -> set[str]:
+    return {
+        p.decode("utf-8", "surrogateescape")
+        for p in git(repo, *args, work_tree=work_tree).split(b"\0")
+        if p
+    }
+
+
+def records(root: Path, *args: str):
+    """Split `-z` output of `<fields>\\t<path>` records into (fields, raw path)."""
+    for record in git(root, *args, work_tree=root).split(b"\0"):
+        if record:
+            meta, path = record.split(b"\t", 1)
+            yield meta.split(b" "), path
 
 
 def repository_root(repo: Path) -> Path:
@@ -242,22 +249,16 @@ def unstaged_paths(root: Path) -> list[str]:
     `git diff` would compare content through the repository's clean filters,
     which are programs the observed actor can configure; hash raw bytes instead.
     """
-    algorithm = (
-        git(root, "rev-parse", "--show-object-format", work_tree=root).decode().strip()
-    )
+    algorithm = text(root, "rev-parse", "--show-object-format")
     if algorithm not in ("sha1", "sha256"):
         raise ValueError("unsupported Git object format")
     changed = set()
     tree = Worktree(root)
     try:
         # -t prefixes each entry with a status tag; "S" marks skip-worktree.
-        for record in git(
-            root, "ls-files", "--stage", "-t", "-z", work_tree=root
-        ).split(b"\0"):
-            if not record:
-                continue
-            meta, path = record.split(b"\t", 1)
-            tag, mode, oid, stage = meta.split(b" ")
+        for (tag, mode, oid, stage), path in records(
+            root, "ls-files", "--stage", "-t", "-z"
+        ):
             if stage != b"0" or entry_changed(
                 tree,
                 root,
@@ -276,16 +277,12 @@ def unstaged_paths(root: Path) -> list[str]:
 def tree_entries(root: Path, commit: str) -> dict[str, tuple[bytes, bytes]]:
     """Raw path -> (mode, object ID) for one commit tree."""
 
-    entries = {}
-    for record in git(
-        root, "ls-tree", "-r", "--full-tree", "-z", commit, work_tree=root
-    ).split(b"\0"):
-        if not record:
-            continue
-        meta, path = record.split(b"\t", 1)
-        mode, _kind, oid = meta.split(b" ")
-        entries[path.decode("utf-8", "surrogateescape")] = (mode, oid)
-    return entries
+    return {
+        path.decode("utf-8", "surrogateescape"): (mode, oid)
+        for (mode, _kind, oid), path in records(
+            root, "ls-tree", "-r", "--full-tree", "-z", commit
+        )
+    }
 
 
 def intent_to_add(root: Path, head: str) -> set[str]:
@@ -309,7 +306,9 @@ def intent_to_add(root: Path, head: str) -> set[str]:
             "--",
             work_tree=root,
         ).split(b"\0")
-        return {status + b"\0" + path for status, path in zip(output[::2], output[1::2])}
+        return {
+            status + b"\0" + path for status, path in zip(output[::2], output[1::2])
+        }
 
     return {
         record.split(b"\0", 1)[1].decode("utf-8", "surrogateescape")
@@ -331,11 +330,7 @@ def index_entries(
     placeholders = intent_to_add(root, head)
     entries = {}
     unmerged = set()
-    for record in git(root, "ls-files", "--stage", "-z", work_tree=root).split(b"\0"):
-        if not record:
-            continue
-        meta, path = record.split(b"\t", 1)
-        mode, oid, stage = meta.split(b" ")
+    for (mode, oid, stage), path in records(root, "ls-files", "--stage", "-z"):
         name = path.decode("utf-8", "surrogateescape")
         if stage != b"0":
             unmerged.add(name)
@@ -352,11 +347,11 @@ def entry_delta(
 ) -> list[str]:
     """Paths added, deleted, mode-changed, object-changed or explicitly unresolved."""
 
-    candidates = set(left) | set(right) | (always or set())
+    always = always or set()
     return sorted(
         path
-        for path in candidates
-        if path in (always or set()) or left.get(path) != right.get(path)
+        for path in set(left) | set(right) | always
+        if path in always or left.get(path) != right.get(path)
     )
 
 
@@ -368,29 +363,24 @@ def untracked_paths(root: Path) -> list[str]:
     not, so they are never applied. Untracked `.gitignore` files are listed even
     when they ignore themselves, so a new one cannot hide its directory silently.
     """
-    return sorted(
-        set(
-            paths(
-                root,
-                "ls-files",
-                "--others",
-                "--exclude-per-directory=.gitignore",
-                "-z",
-                work_tree=root,
-            )
-        )
-        | set(
-            paths(
-                root,
-                "ls-files",
-                "--others",
-                "-z",
-                "--",
-                ":(glob)**/.gitignore",
-                work_tree=root,
-            )
-        )
+    visible = paths(
+        root,
+        "ls-files",
+        "--others",
+        "--exclude-per-directory=.gitignore",
+        "-z",
+        work_tree=root,
     )
+    gitignores = paths(
+        root,
+        "ls-files",
+        "--others",
+        "-z",
+        "--",
+        ":(glob)**/.gitignore",
+        work_tree=root,
+    )
+    return sorted(visible | gitignores)
 
 
 def index_fingerprint(root: Path) -> str | None:
@@ -419,27 +409,13 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     location = Path(repo).expanduser().resolve()
     root = repository_root(location)
     index = index_fingerprint(root)
-    head = (
-        git(root, "rev-parse", "--verify", "HEAD^{commit}", work_tree=root)
-        .decode()
-        .strip()
-    )
+    head = text(root, "rev-parse", "--verify", "HEAD^{commit}")
     before = None
     if baseline is not None:
         # Full object IDs only: no options, pathspecs, or moving symbolic refs.
-        if not re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", baseline):
+        if not re.fullmatch(FULL_COMMIT_ID, baseline):
             raise ValueError("baseline must be a full commit object ID")
-        before = (
-            git(
-                root,
-                "rev-parse",
-                "--verify",
-                baseline + "^{commit}",
-                work_tree=root,
-            )
-            .decode()
-            .strip()
-        )
+        before = text(root, "rev-parse", "--verify", baseline + "^{commit}")
     head_entries = tree_entries(root, head)
     indexed, unmerged = index_entries(root, head)
     staged = entry_delta(head_entries, indexed, always=unmerged)
@@ -447,7 +423,7 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     result = {
         "commit_before": before,
         "commit_after": head,
-        "branch": git(root, "branch", "--show-current", work_tree=root).decode().strip(),
+        "branch": text(root, "branch", "--show-current"),
         "committed_delta": entry_delta(tree_entries(root, before), head_entries)
         if before
         else None,
@@ -456,7 +432,7 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
         "working_tree_delta": sorted(set(staged) | set(unstaged)),
         "untracked_files": untracked_paths(root),
     }
-    if git(root, "rev-parse", "HEAD", work_tree=root).decode().strip() != head:
+    if text(root, "rev-parse", "HEAD") != head:
         raise ValueError("Git HEAD changed during capture; retry")
     if index_fingerprint(root) != index:
         raise ValueError("Git index changed during capture; retry")

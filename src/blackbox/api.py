@@ -37,6 +37,7 @@ from .integrity import (
 )
 from .models import (
     CLAIM_RELATIONS,
+    FULL_COMMIT_ID,
     Capture,
     ChainAnchor,
     Claim,
@@ -181,7 +182,7 @@ def capture(
     if baseline is not None and (
         repo is None
         or not isinstance(baseline, str)
-        or re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", baseline) is None
+        or re.fullmatch(FULL_COMMIT_ID, baseline) is None
     ):
         raise ValidationError()
     return _output(
