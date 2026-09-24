@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import stat
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,12 +20,35 @@ def now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
+def private_directory(directory: Path) -> None:
+    """Refuse a database directory that another local user could write.
+
+    Whoever can write the directory can replace or unlink the database despite its
+    0600 mode, or plant a WAL sidecar that SQLite replays on open. The directory
+    must be owned by this user (or root) and closed to group and other writes. An
+    ancestor may be shared only with the sticky bit, which stops other users
+    renaming entries they do not own.
+    """
+    uid = os.geteuid()
+    directory = directory.resolve()
+    info = directory.stat()
+    if info.st_uid not in (uid, 0) or info.st_mode & 0o022:
+        raise DatabaseIssue("database directory must not be writable by other users")
+    for ancestor in directory.parents:
+        info = ancestor.stat()
+        if info.st_uid not in (uid, 0) or (
+            info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX
+        ):
+            raise DatabaseIssue("database directory must not be writable by other users")
+
+
 def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
     path = Path(path).expanduser().absolute()
     if path.is_symlink():
         raise DatabaseIssue("database symlinks are not supported")
     if not readonly:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        private_directory(path.parent)
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from blackbox._signals import DatabaseIssue
 from blackbox.db import connect
 from blackbox.ingest import append_claim, ingest
 from blackbox.models import Capture, identity
@@ -808,6 +809,40 @@ def test_model_instance_cannot_bypass_validation(database):
     malicious = Capture.model_construct(request_id="x", producer="password=synthetic")
     with pytest.raises(ValueError):
         ingest(database, malicious)
+
+
+@pytest.mark.parametrize("mode", [0o777, 0o1777, 0o770, 0o707])
+def test_database_directory_writable_by_others_is_refused(tmp_path, mode):
+    directory = tmp_path / "shared"
+    directory.mkdir()
+    directory.chmod(mode)
+    with pytest.raises(DatabaseIssue):
+        connect(directory / "blackbox.sqlite3")
+    assert not (directory / "blackbox.sqlite3").exists()
+
+
+@pytest.mark.parametrize("mode, allowed", [(0o777, False), (0o1777, True)])
+def test_database_ancestor_may_be_shared_only_with_the_sticky_bit(
+    tmp_path, mode, allowed
+):
+    ancestor = tmp_path / "ancestor"
+    (ancestor / "private").mkdir(parents=True, mode=0o700)
+    ancestor.chmod(mode)
+    database = ancestor / "private" / "blackbox.sqlite3"
+    if allowed:
+        connect(database).close()
+    else:
+        with pytest.raises(DatabaseIssue):
+            connect(database)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs root to chown")
+def test_database_directory_owned_by_another_user_is_refused(tmp_path):
+    directory = tmp_path / "theirs"
+    directory.mkdir(mode=0o700)
+    os.chown(directory, 12345, 12345)
+    with pytest.raises(DatabaseIssue):
+        connect(directory / "blackbox.sqlite3")
 
 
 def test_foreign_database_not_adopted(tmp_path):
