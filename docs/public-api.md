@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.6.4
+# Supported public API — BlackBox 0.6.5
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -27,6 +27,10 @@ digest instead of rejecting them, and a symlinked `.git` is accepted as in Git.
 Package 0.6.4 keeps schema v4; the Git observer no longer lets the observed
 repository's `diff.ignoreSubmodules`, `.gitmodules` `ignore`, `core.fileMode`,
 `.git/info/exclude` or `core.excludesFile` settings hide changes (below).
+Package 0.6.5 keeps schema v4; readers now refuse a database directory that other
+local users could write, as writers already did, and a symlink on the database
+path can no longer route either around a shared directory. A reader opening a
+copy in such a directory now raises `DatabaseError`.
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
