@@ -476,6 +476,76 @@ def test_submodule_counts_as_changed_only_on_a_different_commit(repo, tmp_path):
     assert collect_git(root)["unstaged_delta"] == ["sub"]
 
 
+@pytest.mark.parametrize("replacement", ["file", "symlink"])
+def test_submodule_replaced_by_a_non_directory_counts_as_changed(repo, replacement):
+    root, git = repo
+    head = git("rev-parse", "HEAD")
+    git("update-index", "--add", "--cacheinfo", f"160000,{head},sub")
+    git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "add gitlink",
+    )
+    (root / "sub").mkdir()  # uninitialized submodule: unchanged, as in Git
+    assert collect_git(root)["unstaged_delta"] == []
+    (root / "sub").rmdir()
+    if replacement == "file":
+        (root / "sub").write_text("not a submodule\n")
+        assert git("status", "--porcelain") == "T sub"
+    else:
+        # Git reports a symlink here as a type change or, since 2.5x, refuses
+        # the path outright; either way it is not an unchanged submodule.
+        (root / "sub").symlink_to("tracked.txt")
+    result = collect_git(root)
+    assert result["unstaged_delta"] == result["working_tree_delta"] == ["sub"]
+
+
+def test_missing_objects_are_never_fetched_through_repository_commands(tmp_path):
+    # In a partial clone Git fetches a missing object from the promisor remote,
+    # running the repository's configured upload-pack command to do it.
+    server = tmp_path / "server"
+    subprocess.run(["git", "init", "-q", str(server)], check=True)
+    (server / "d").mkdir()
+    (server / "d" / "f").write_text("f\n")
+    serve = ["git", "-C", str(server)]
+    subprocess.run([*serve, "add", "."], check=True)
+    subprocess.run(
+        [*serve, "-c", "user.name=Test", "-c", "user.email=test@example.invalid"]
+        + ["commit", "-qm", "server"],
+        check=True,
+    )
+    subprocess.run([*serve, "config", "uploadpack.allowFilter", "true"], check=True)
+    client = tmp_path / "client"
+    subprocess.run(
+        ["git", "clone", "-q", "--filter=tree:0", "--no-checkout"]
+        + [server.as_uri(), str(client)],
+        check=True,
+    )
+    marker = tmp_path / "marker"
+    command = tmp_path / "upload-pack"
+    command.write_text(f'#!/bin/sh\ntouch "{marker}"\nexec git-upload-pack "$@"\n')
+    command.chmod(0o755)
+    configure = ["git", "-C", str(client), "config"]
+    subprocess.run([*configure, "remote.origin.uploadpack", str(command)], check=True)
+    # The repository may also try to re-allow transports for itself.
+    subprocess.run([*configure, "protocol.allow", "always"], check=True)
+    subprocess.run([*configure, "protocol.file.allow", "always"], check=True)
+    with pytest.raises(ValueError):
+        collect_git(client)
+    assert not marker.exists()
+    # Plain Git runs the command: the setup is a real execution route.
+    subprocess.run(
+        ["git", "-C", str(client), "ls-tree", "-r", "HEAD"],
+        check=True,
+        capture_output=True,
+    )
+    assert marker.exists()
+
+
 def git_diff_names(root):
     listing = subprocess.check_output(
         ["git", "-C", str(root), "diff", "--name-only", "-z"]
@@ -866,6 +936,45 @@ def test_index_change_during_capture_is_refused(repo, monkeypatch):
 
     monkeypatch.setattr(module, "unstaged_paths", stage_in_between)
     # Without the index check this change appears in neither delta.
+    with pytest.raises(ValueError, match="index changed"):
+        collect_git(root)
+
+
+def test_stat_only_index_refresh_during_capture_is_not_movement(repo, monkeypatch):
+    root, git = repo
+    module = importlib.import_module("blackbox.provenance")
+    original = module.unstaged_paths
+    index = root / ".git" / "index"
+
+    def refresh_in_between(path):
+        # An IDE or shell prompt running `git status` rewrites the index to
+        # refresh cached stat data, without changing any entry.
+        before = index.read_bytes()
+        stamp = (root / "tracked.txt").stat().st_mtime + 5
+        os.utime(root / "tracked.txt", (stamp, stamp))
+        git("status", "--porcelain")
+        assert index.read_bytes() != before
+        return original(path)
+
+    monkeypatch.setattr(module, "unstaged_paths", refresh_in_between)
+    result = collect_git(root)
+    assert result["staged_delta"] == result["unstaged_delta"] == []
+
+
+def test_intent_to_add_becoming_staged_during_capture_is_refused(repo, monkeypatch):
+    root, git = repo
+    (root / "empty").write_text("")
+    git("add", "-N", "empty")
+    module = importlib.import_module("blackbox.provenance")
+    original = module.unstaged_paths
+
+    def stage_in_between(path):
+        # The index still holds the same empty blob; only the intent-to-add
+        # flag clears, which would otherwise leave `empty` in neither delta.
+        git("add", "empty")
+        return original(path)
+
+    monkeypatch.setattr(module, "unstaged_paths", stage_in_between)
     with pytest.raises(ValueError, match="index changed"):
         collect_git(root)
 

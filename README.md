@@ -76,7 +76,7 @@ schema v3.
 
 ## Python integration
 
-BlackBox 0.6.7 exposes supported operations and typed results through `import
+BlackBox 0.6.8 exposes supported operations and typed results through `import
 blackbox`. Use `initialize`, `capture`, `append_claim`, `get_session`,
 `get_timeline`, `get_claims`, `link_evidence`, `get_evidence_links`,
 `get_claim_relations`, `check_integrity`, and `get_chain_head`. See the

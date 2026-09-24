@@ -174,11 +174,38 @@ def test_failed_git_snapshot_keeps_the_event_and_does_not_block(database, tmp_pa
         json.dumps(tool_event("PostToolUse", tool="token=abc")).encode(),
     ],
 )
-def test_invalid_payloads_fail_without_blocking_or_leaking(database, payload):
+def test_invalid_payloads_are_recorded_by_digest_without_blocking_or_leaking(
+    database, payload
+):
     result = hook(database, payload)
     assert (result.returncode, result.stdout) == (1, b"")
     assert json.loads(result.stderr) == {"error": "invalid_input", "retryable": False}
     assert b"abc" not in result.stderr
+    (view,) = sessions(database).values()
+    assert view.session.request_id.startswith("unreadable:")
+    (observation,) = view.observations
+    assert observation.data.name == "UnreadableHookPayload"
+    assert observation.data.content_digest == hashlib.sha256(payload).hexdigest()
+    assert view.sources[0].authority == "host_reported"
+    stored = b"".join(f.read_bytes() for f in database.parent.iterdir())
+    for secret in (b"token=abc", b"hunter2", b"marker-7f3a"):
+        assert secret not in stored
+    assert bb.check_integrity(database).ok
+
+
+def test_tool_call_cannot_hide_behind_input_nested_past_the_parser(database):
+    # The agent writes tool inputs; nesting deeper than Python's JSON parser
+    # follows used to leave no record of the call at all.
+    depth = 100_000
+    raw = json.dumps(tool_event("PostToolUse", tool="mcp__srv__tool"))[:-1].encode()
+    raw += b', "tool_response": ' + b"[" * depth + b"]" * depth + b"}"
+    assert len(raw) < 1 << 20
+    result = hook(database, raw)
+    assert (result.returncode, result.stdout) == (1, b"")  # reported after recording
+    assert json.loads(result.stderr) == {"error": "invalid_input", "retryable": False}
+    (view,) = sessions(database).values()
+    assert view.observations[0].data.name == "UnreadableHookPayload"
+    assert view.observations[0].data.content_digest == hashlib.sha256(raw).hexdigest()
 
 
 def test_hook_usage_errors_never_use_the_blocking_exit_code(database):
@@ -266,6 +293,29 @@ def test_oversized_payload_still_gets_a_git_snapshot(database, tmp_path):
         if o.kind == "git"
     ]
     assert [s.untracked_files for s in snapshots] == [("hidden-by-size.txt",)]
+
+
+def test_unreadable_payload_still_gets_a_git_snapshot(database, tmp_path):
+    # Its event name is unknown, so it might have ended the turn.
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=Test"]
+        + ["-c", "user.email=test@example.invalid", "commit", "-q"]
+        + ["--allow-empty", "-m", "baseline"],
+        check=True,
+    )
+    (repo / "hidden-by-shape.txt").write_text("new\n")
+    result = hook(database, b"[" * 100_000, "--git", cwd=repo)
+    assert (result.returncode, result.stdout) == (1, b"")
+    assert json.loads(result.stderr) == {"error": "invalid_input", "retryable": False}
+    snapshots = [
+        o.data
+        for view in sessions(database).values()
+        for o in view.observations
+        if o.kind == "git"
+    ]
+    assert [s.untracked_files for s in snapshots] == [("hidden-by-shape.txt",)]
 
 
 def test_payload_reader_never_buffers_past_the_limit(monkeypatch):
