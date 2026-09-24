@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import blackbox as bb
 from blackbox._signals import DatabaseIssue
 from blackbox.db import connect
 from blackbox.ingest import append_claim, ingest
@@ -984,6 +985,52 @@ def test_unchanged_index_is_not_mistaken_for_movement(repo):
     (root / "tracked.txt").write_text("staged\n")
     git("add", "tracked.txt")
     assert collect_git(root)["staged_delta"] == ["tracked.txt"]
+
+
+def test_undecodable_branch_name_is_recorded_not_fatal(database, repo):
+    # Ref names are bytes; one that is not UTF-8 used to fail every snapshot.
+    root, _ = repo
+    name = b"refs/heads/bad\xff"
+    for args in ([b"update-ref", name, b"HEAD"], [b"symbolic-ref", b"HEAD", name]):
+        subprocess.run([b"git", b"-C", bytes(root), *args], check=True)
+    (root / "tracked.txt").write_text("edited\n")
+    result = collect_git(root)
+    assert result["branch"] == "bad\udcff"
+    assert result["unstaged_delta"] == ["tracked.txt"]
+    request = {"request_id": "odd-branch", "producer": "test-agent"}
+    session = bb.capture(database, request, repo=root).session_id
+    (observation,) = bb.get_session(database, session).observations
+    assert observation.data.branch == "bad\udcff"
+    assert bb.check_integrity(database).ok
+
+
+@pytest.mark.parametrize(
+    ("start", "switch"),
+    [
+        ("main", ["checkout", "-q", "other"]),
+        ("main", ["checkout", "-q", "--detach"]),
+        ("detached", ["checkout", "-q", "main"]),
+    ],
+)
+def test_head_switch_at_the_same_commit_during_capture_is_refused(
+    repo, monkeypatch, start, switch
+):
+    root, git = repo
+    git("branch", "-M", "main")
+    git("branch", "other")
+    if start == "detached":
+        git("checkout", "-q", "--detach")
+    module = importlib.import_module("blackbox.provenance")
+    original = module.unstaged_paths
+
+    def switch_in_between(path):
+        # Same commit, different HEAD: the recorded branch would be stale.
+        git(*switch)
+        return original(path)
+
+    monkeypatch.setattr(module, "unstaged_paths", switch_in_between)
+    with pytest.raises(ValueError, match="HEAD changed"):
+        collect_git(root)
 
 
 def test_local_observer_authority_cannot_be_claimed_by_input(

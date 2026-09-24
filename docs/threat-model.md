@@ -114,9 +114,15 @@ ordinary text.
   `hook --git` can add noticeable turn-end latency. This is the deliberate
   availability/performance cost of the stronger observation rule.
 - **Submodule contents.** A submodule counts as changed only when a different
-  commit is checked out or the path is no longer a directory. Uncommitted edits inside a submodule are not observed,
-  because inspecting them would mean running Git in that repository's working
-  tree.
+  commit is checked out or the path is no longer a directory. Uncommitted edits
+  inside a submodule are not observed, because inspecting them would mean
+  running Git in that repository's working tree. The checked-out commit itself
+  is what the submodule's own `.git` reports, and the agent controls that too:
+  a `.git` file (`gitdir: ...`) pointing at another repository whose `HEAD`
+  matches the recorded commit makes a changed submodule look unchanged. The
+  observer reads that `.git` by path, so the no-symlink guarantee for
+  working-tree reads (see Defended) does not extend to it; a symlink swapped in
+  mid-capture would gain nothing the `.git` file does not already allow.
 - **Wall-clock trust.** `recorded_at` is the local clock at write time. It is
   not attested and can move. `sequence` is local persistence order, not
   causality.
