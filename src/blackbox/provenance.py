@@ -278,21 +278,40 @@ def tree_entries(root: Path, commit: str) -> dict[str, tuple[bytes, bytes]]:
     return entries
 
 
-def index_entries(root: Path) -> tuple[dict[str, tuple[bytes, bytes]], set[str]]:
-    """Raw stage-0 index entries plus paths with unresolved stages."""
+# `ls-files --debug` prints each entry's stat data and index flags after it.
+INDEX_DEBUG = re.compile(
+    rb"  ctime: [^\n]*\n  mtime: [^\n]*\n  dev: [^\n]*\n  uid: [^\n]*\n"
+    rb"  size: [0-9]+\tflags: ([0-9a-f]+)\n"
+)
+INTENT_TO_ADD = 1 << 29  # CE_INTENT_TO_ADD in Git's cache.h
 
+
+def index_entries(root: Path) -> tuple[dict[str, tuple[bytes, bytes]], set[str]]:
+    """Raw stage-0 index entries plus paths with unresolved stages.
+
+    Intent-to-add (`git add -N`) entries are left out, as in Git: nothing is
+    staged, and the unstaged comparison reports the path against the placeholder
+    empty blob. Their flag is read from the index itself; `git status` would
+    also report it, but runs clean filters while comparing the working tree.
+    """
+
+    listing = git(root, "ls-files", "--stage", "--debug", "-z", work_tree=root)
     entries = {}
     unmerged = set()
-    for record in git(root, "ls-files", "--stage", "-z", work_tree=root).split(b"\0"):
-        if not record:
-            continue
-        meta, path = record.split(b"\t", 1)
+    position = 0
+    while position < len(listing):
+        end = listing.index(b"\0", position)
+        meta, path = listing[position:end].split(b"\t", 1)
+        debug = INDEX_DEBUG.match(listing, end + 1)
+        if debug is None:
+            raise ValueError("unexpected Git index listing")
+        position = debug.end()
         mode, oid, stage = meta.split(b" ")
         name = path.decode("utf-8", "surrogateescape")
-        if stage == b"0":
-            entries[name] = (mode, oid)
-        else:
+        if stage != b"0":
             unmerged.add(name)
+        elif not int(debug.group(1), 16) & INTENT_TO_ADD:
+            entries[name] = (mode, oid)
     return entries, unmerged
 
 

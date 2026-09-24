@@ -398,7 +398,9 @@ def test_repository_clean_filter_never_runs_and_cannot_hide_changes(repo, tmp_pa
     git("config", "filter.hide.clean", str(hook))
     git("config", "filter.hide.required", "true")
     (root / ".git" / "info" / "attributes").write_text("* filter=hide\n")
-    (root / "tracked.txt").write_text("hidden from a trusting observer\n")
+    # Same size as the committed "baseline\n", so Git must re-hash the file,
+    # running the filter, in any command that compares the working tree.
+    (root / "tracked.txt").write_text("tampered\n")
     assert git("diff", "--name-only") == ""  # plain Git is blinded
     marker.unlink()
     result = collect_git(root)
@@ -804,6 +806,19 @@ def test_untracked_files_cannot_hide_behind_invisible_ignore_rules(repo, tmp_pat
         "globally-excluded.txt",
         "info-excluded.txt",
     ]
+
+
+def test_intent_to_add_is_unstaged_like_in_git(repo):
+    root, git = repo
+    (root / "later.txt").write_text("not staged yet\n")
+    (root / "tracked.txt").write_text("re-added\n")
+    git("rm", "-q", "--cached", "tracked.txt")
+    git("add", "-N", "later.txt", "tracked.txt")
+    assert git("diff", "--cached", "--name-only") == "tracked.txt"
+    assert git("diff", "--name-only").split() == ["later.txt", "tracked.txt"]
+    result = collect_git(root)
+    assert result["staged_delta"] == ["tracked.txt"]  # removed from the index
+    assert result["unstaged_delta"] == ["later.txt", "tracked.txt"]
 
 
 def test_local_observer_authority_cannot_be_claimed_by_input(

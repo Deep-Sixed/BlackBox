@@ -127,7 +127,8 @@ The public Pydantic result models are frozen and their collections are tuples:
   `GitObservation.untracked_files` lists untracked paths not ignored by a
   `.gitignore` in the working tree; since 0.6.4 `.git/info/exclude` and
   `core.excludesFile` are not applied, and an untracked `.gitignore` is always
-  listed, even when it ignores itself.
+  listed, even when it ignores itself. A path marked with `git add -N`
+  (intent-to-add) counts as unstaged, not staged, as in Git.
 - Derived views: `SessionView` combines canonical projections and lifecycle status;
   `ClaimView` adds `active`, `superseded`, `contested` or `retracted` status to a claim.
   `EvidenceLinkView` and `ClaimRelationView` expose attributed relations and local order.
