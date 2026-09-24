@@ -66,6 +66,16 @@ ordinary text.
 - **Code running as the BlackBox user.** Such code can alter the database, the
   installed package, the `git` executable found on `PATH`, or the operator's
   global and system Git configuration. The Git observer trusts all of these.
+- **Repository state the agent writes.** The observed agent controls `.git`:
+  `HEAD`, branches, the index, objects and any `.git` file or symlink pointing
+  elsewhere. A Git observation reports that repository's state as Git reads it;
+  it cannot tell honest history from history the agent rewrote. An agent can,
+  for example, commit its edits so they leave `staged_delta` and
+  `unstaged_delta`, or point `.git` at a different repository. Only a
+  `baseline` the caller supplies as a full commit ID is fixed independently of
+  the agent, and `committed_delta` is computed against its real tree (replace
+  refs are ignored). Treat a Git observation as "what this repository showed
+  the observer", not as proof of what the agent did.
 - **Other repository configuration.** The Git observer still honours the
   observed repository's config for the commands it runs (`rev-parse`, `branch`,
   `ls-files`, `config` and tree/index diffs). None of these are known to run configured

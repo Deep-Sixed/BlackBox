@@ -66,6 +66,14 @@ the digest is stored, a payload containing credential-shaped text is still
 recorded. The credential filter applies to the stored fields (event name, tool
 name, session ID); a tool name that looks like a credential is rejected.
 
+A payload larger than 32 MiB is not parsed, but it is still recorded: since
+0.6.3, `blackbox hook` reads at most that much into memory, hashes the rest as it
+streams, and records an `OversizedHookPayload` observation whose
+`content_digest` covers every payload byte. The event and tool names are unknown
+without parsing, so they are not recorded, and there is no `--git` snapshot.
+Before 0.6.3 such an event was rejected as `invalid_input` and not recorded at
+all, so an agent could hide a tool result by making it huge.
+
 Redelivering the same tool event is a duplicate, not a second record. The same
 tool-use ID with different payload bytes is a `conflict`. Events without a host
 identifier get a random one, so two identical `Stop` payloads are two stops.

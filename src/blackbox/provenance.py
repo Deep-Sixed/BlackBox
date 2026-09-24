@@ -72,13 +72,15 @@ def repository_root(repo: Path) -> Path:
     while True:
         marker = current / ".git"
         try:
-            mode = os.lstat(marker).st_mode
+            # Like Git, follow a symlinked .git (some tools link it to a shared
+            # store). This grants nothing: a .git file can point anywhere too.
+            mode = os.stat(marker).st_mode
         except FileNotFoundError:
-            pass
+            if os.path.lexists(marker):
+                raise ValueError("Git metadata collection failed") from None
         else:
             if stat.S_ISDIR(mode) or stat.S_ISREG(mode):
                 return current
-            # Git does not treat a symlinked .git marker as a worktree root.
             raise ValueError("Git metadata collection failed")
         parent = current.parent
         if parent == current:

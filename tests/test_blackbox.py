@@ -705,6 +705,26 @@ def test_replaced_head_cannot_hide_staged_changes(repo):
     assert result["staged_delta"] == result["working_tree_delta"] == ["tracked.txt"]
 
 
+def test_symlinked_git_directory_is_a_repository_like_in_git(repo, tmp_path):
+    root, git = repo
+    store = tmp_path / "shared-store.git"
+    (root / ".git").rename(store)
+    (root / ".git").symlink_to(store)
+    (root / "tracked.txt").write_text("edited\n")
+    assert git("rev-parse", "--show-toplevel") == str(root)  # Git accepts it
+    result = collect_git(root)
+    assert result["commit_after"] == git("rev-parse", "HEAD")
+    assert result["unstaged_delta"] == ["tracked.txt"]
+
+
+def test_dangling_git_symlink_is_not_a_repository(repo, tmp_path):
+    root, _ = repo
+    (root / ".git").rename(tmp_path / "moved.git")
+    (root / ".git").symlink_to(tmp_path / "missing.git")
+    with pytest.raises(ValueError):
+        collect_git(root)
+
+
 def test_local_observer_authority_cannot_be_claimed_by_input(
     database, capture_request, repo
 ):
