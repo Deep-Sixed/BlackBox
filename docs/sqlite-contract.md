@@ -34,8 +34,9 @@ the additive schema, backfills receipts, appends metadata/history and advances
 `user_version`. All these changes commit together. Failure, including a write
 error, rolls them back. No canonical row, identifier, event sequence, authority
 or verification classification changes. The migration history has version,
-previous version, schema digest and installation time only. V1 had no migration journal: v2 records the real upgrade, without
-inventing a timestamp for a historical v1 installation. Fresh v4 records `0 → 4`.
+previous version, schema digest and installation time only. V1 had no
+migration journal: v2 records the real upgrade, without inventing a timestamp
+for a historical v1 installation. Fresh v4 records `0 → 4`.
 History and metadata reject UPDATE/DELETE.
 
 Schema-v3 backfill creates relation rows for historical corrections, binds them
