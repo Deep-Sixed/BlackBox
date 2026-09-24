@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 Text = Annotated[str, Field(min_length=1, max_length=2048)]
+# A full Git commit object ID (SHA-1 or SHA-256): no abbreviations, refs or options.
+FULL_COMMIT_ID = r"[a-f0-9]{40}|[a-f0-9]{64}"
 # Newer-to-older relations a claim may assert on an existing claim.
 CLAIM_RELATIONS = ("supersedes", "contests", "retracts")
 
