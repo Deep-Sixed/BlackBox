@@ -32,8 +32,10 @@ and what the records do and do not prove.
 
 ## Local use
 
-The package supports Python 3.14 (`>=3.14,<3.15`). CI and the release
-compatibility tests run on exactly `3.14.5`.
+The package supports Python 3.14 (`>=3.14,<3.15`) on POSIX systems. CI and the
+release compatibility tests run on exactly `3.14.5` on Linux. The database and
+Git observer checks rely on POSIX ownership, permission and `O_NOFOLLOW`
+semantics, so Windows is not supported: `import blackbox` fails there.
 
 ```bash
 uv sync --frozen --python 3.14.5

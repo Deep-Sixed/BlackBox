@@ -81,10 +81,22 @@ ordinary text.
   the observer", not as proof of what the agent did.
 - **Other repository configuration.** The Git observer still honours the
   observed repository's config for the commands it runs (`rev-parse`, `branch`,
-  `ls-files`, `config` and tree/index diffs). None of these are known to run configured
+  `ls-files`, `ls-tree` and `diff-index --cached`). None of these are known to run configured
   programs or read working-tree file contents. A Git feature that does
   would reopen this surface. Full isolation means running the observer in a
   sandbox (see production gaps).
+- **A working tree changing during capture.** A snapshot reads HEAD, the index
+  and the working tree separately. If HEAD or the index file changes before the
+  snapshot finishes, it is refused with a retryable error rather than recorded,
+  so a change staged mid-capture cannot fall between the staged and unstaged
+  reads. Working-tree files are hashed one at a time, though, and are not
+  captured atomically: a file edited while the walk is under way may be
+  recorded in either state. Only a filesystem snapshot would close this.
+- **Files matched by an unchanged `.gitignore`.** `untracked_files` omits paths
+  ignored by a `.gitignore` in the working tree, to keep dependency and build
+  directories out of every record. A change to a `.gitignore`, or a new one, is
+  itself recorded; but a new file under an already-committed rule (for example
+  `scratch/payload` under `scratch/`) leaves no trace in the observation.
 - **Deleting a skip-worktree file.** A tracked file marked skip-worktree and
   absent from disk counts as unchanged, because that is exactly what sparse
   checkout does. So an actor that sets the flag and then deletes the file hides
@@ -123,6 +135,7 @@ ordinary text.
 | Confidentiality | None beyond file permissions | Encryption at rest; access control on readers |
 | Observer isolation | Git runs as the BlackBox user, against the observed repository's own config | Run the observer with a sandboxed, minimal Git configuration |
 | Canonical form | [BlackBox canonical JSON v1](canonical-json.md), not RFC 8785 | Independent verifiers implement that spec |
+| Platform | POSIX only; CI on Linux | Windows support would need its own ownership and path-safety checks |
 
 None of these change the mechanism. They harden where its assumptions are
 enforced.

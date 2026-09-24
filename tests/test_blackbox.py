@@ -837,6 +837,30 @@ def test_intent_to_add_over_a_removed_path_is_a_staged_deletion(repo):
     assert result["staged_delta"] == result["unstaged_delta"] == ["tracked.txt"]
 
 
+def test_index_change_during_capture_is_refused(repo, monkeypatch):
+    root, git = repo
+    module = importlib.import_module("blackbox.provenance")
+    original = module.unstaged_paths
+
+    def stage_in_between(path):
+        # After the staged read, before the unstaged one: `git add` lands here.
+        (root / "tracked.txt").write_text("staged mid-capture\n")
+        git("add", "tracked.txt")
+        return original(path)
+
+    monkeypatch.setattr(module, "unstaged_paths", stage_in_between)
+    # Without the index check this change appears in neither delta.
+    with pytest.raises(ValueError, match="index changed"):
+        collect_git(root)
+
+
+def test_unchanged_index_is_not_mistaken_for_movement(repo):
+    root, git = repo
+    (root / "tracked.txt").write_text("staged\n")
+    git("add", "tracked.txt")
+    assert collect_git(root)["staged_delta"] == ["tracked.txt"]
+
+
 def test_local_observer_authority_cannot_be_claimed_by_input(
     database, capture_request, repo
 ):

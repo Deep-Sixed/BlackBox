@@ -171,7 +171,9 @@ retry contract.
 Busy means SQLite lock contention. Conflicting request reuse or a second
 superseding claim is a nonretryable conflict. An observer failure can be retried
 with the same request after the local observation problem is resolved; the existing
-durable reservation/failure history remains.
+durable reservation/failure history remains. A Git snapshot whose HEAD or index
+file changes while it is taken fails this way, since its staged and unstaged
+reads would describe different moments.
 When the Git observer's own metadata (a path or branch name) looks like a
 credential, capture raises `ObservationRejectedError`: an unchanged retry fails
 the same way, so rename or remove the offending path, then retry the same
