@@ -15,7 +15,7 @@ import subprocess
 from pathlib import Path
 
 from ._signals import ObservationRejected
-from .models import FULL_COMMIT_ID, safe_strings
+from .models import FULL_COMMIT_ID, SUSPICIOUS, safe_strings
 
 # The observed repository's own config and refs are controlled by the observed
 # actor. Command-line options outrank them: never run its fsmonitor hook, which
@@ -405,6 +405,30 @@ def index_fingerprint(root: Path) -> str | None:
         os.close(handle)
 
 
+# Stands in for a path or branch name that looks like a credential. Rejecting the
+# whole snapshot instead would let the observed actor blind the observer with one
+# file named, say, `token=1`. No hash is kept: a short secret would be guessable.
+REDACTED = "[redacted: credential-shaped name]"
+
+
+def redact(result: dict) -> dict:
+    """Replace credential-shaped names; keep one marker per replaced entry."""
+
+    def name(value: str) -> str:
+        return REDACTED if SUSPICIOUS.search(value) else value
+
+    return {
+        key: (
+            sorted(name(item) for item in value)
+            if isinstance(value, list)
+            else name(value)
+            if isinstance(value, str)
+            else value
+        )
+        for key, value in result.items()
+    }
+
+
 def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     location = Path(repo).expanduser().resolve()
     root = repository_root(location)
@@ -436,9 +460,10 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
         raise ValueError("Git HEAD changed during capture; retry")
     if index_fingerprint(root) != index:
         raise ValueError("Git index changed during capture; retry")
+    result = redact(result)
     try:
         safe_strings(result)
     except ValueError:
-        # Deterministic until the repository is changed: not a transient failure.
+        # Unreachable after redaction; kept so nothing credential-shaped is stored.
         raise ObservationRejected("sensitive-shaped Git metadata") from None
     return result

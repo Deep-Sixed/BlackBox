@@ -43,10 +43,11 @@ beyond making tampering *detectable*, and then only in the ways listed below.
 | An agent skipping or suppressing its own reports | With [host hooks](hooks.md), the host runtime reports each prompt, tool call and turn end; the agent is not involved | `host_reported` records, evidence still `unverified` |
 | The recorder blocking or steering the observed agent | `blackbox hook` never exits 2 (the hook "block" code) and never writes to stdout, which some hooks feed back to the agent | cannot block |
 | Other local users reading or replacing the database file | Created `0600`; writers refuse wider permissions and symlinks. Writers and readers refuse a database directory other users own or can write, checking every directory and symlink on the path as written (a directory on the way may be shared only with the sticky bit, and then each symlink in it must be the user's own), since directory write access allows replacement or a planted WAL sidecar whatever the file's mode | `DatabaseError` |
-| Secrets entering the store or leaking through errors | Inputs and observed Git metadata pass a credential-shape filter; public errors are fixed codes with no input, path or exception text | `ValidationError`, `ObservationRejectedError` |
+| Secrets entering the store or leaking through errors | Inputs pass a credential-shape filter; observed Git path and branch names matching it are redacted (a marker, no hash, since a short secret would be guessable); public errors are fixed codes with no input, path or exception text | `ValidationError`; redaction marker |
+| The observed actor blinding the Git observer with a credential-shaped file or branch name | Such names are redacted one by one instead of rejecting the snapshot, so every other change is still recorded | marker in place of the name |
 
-The credential filter is a pattern heuristic that rejects common token, key and
-URL shapes. It is not data-loss prevention and will miss secrets that look like
+The credential filter is a pattern heuristic that rejects (or, in Git
+observations, redacts) common token, key and URL shapes. It is not data-loss prevention and will miss secrets that look like
 ordinary text.
 
 ## Not defended (on purpose or not yet)

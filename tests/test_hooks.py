@@ -243,6 +243,31 @@ def test_oversized_payload_is_recorded_by_digest_not_dropped(database):
     assert view.sources[0].authority == "host_reported"
 
 
+def test_oversized_payload_still_gets_a_git_snapshot(database, tmp_path):
+    # Its event name is unknown, so it might have ended the turn.
+    from blackbox.hooks import MAX_PAYLOAD_BYTES
+
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=Test"]
+        + ["-c", "user.email=test@example.invalid", "commit", "-q"]
+        + ["--allow-empty", "-m", "baseline"],
+        check=True,
+    )
+    (repo / "hidden-by-size.txt").write_text("new\n")
+    payload = {**tool_event("Stop"), "cwd": str(repo), "filler": "A" * MAX_PAYLOAD_BYTES}
+    result = hook(database, json.dumps(payload).encode(), "--git", cwd=repo)
+    assert (result.returncode, result.stdout, result.stderr) == (0, b"", b"")
+    snapshots = [
+        o.data
+        for view in sessions(database).values()
+        for o in view.observations
+        if o.kind == "git"
+    ]
+    assert [s.untracked_files for s in snapshots] == [("hidden-by-size.txt",)]
+
+
 def test_payload_reader_never_buffers_past_the_limit(monkeypatch):
     import io
 
