@@ -42,7 +42,7 @@ def test_supported_exports_are_deliberate():
         "BaseModel",
     ):
         assert name not in bb.__all__
-    assert bb.__version__ == "0.6.6"
+    assert bb.__version__ == "0.6.7"
 
 
 def test_typed_detached_results(database, request_data):
@@ -208,50 +208,59 @@ def test_observer_failure_is_bounded_and_retryable(database, request_data, monke
     assert bb.check_integrity(database).ok
 
 
-def test_sensitive_git_metadata_needs_remediation_not_retry(
-    database, request_data, tmp_path
-):
+def _git_repo(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "baseline",
-        ],
-        check=True,
-    )
-    leaked = repo / "api_key=synthetic-private-value.txt"
-    leaked.write_text("untracked")
-    with pytest.raises(bb.ObservationRejectedError) as caught:
-        bb.capture(database, request_data, repo=repo)
-    assert isinstance(caught.value, bb.ObservationError)
-    assert caught.value.code == "observation_rejected"
-    assert not caught.value.retryable
-    assert "synthetic-private-value" not in "".join(
-        traceback.format_exception(caught.value)
-    )
-    session = bb.get_timeline(database)[0].session_id
-    rejected = bb.get_session(database, session)
-    assert rejected.status == "FAILED_RETRYABLE"
-    assert rejected.failures[-1].retryable == 0
-    # An unchanged retry is rejected again; remediation makes the same request work.
-    with pytest.raises(bb.ObservationRejectedError):
-        bb.capture(database, request_data, repo=repo)
-    assert {failure.retryable for failure in bb.get_session(database, session).failures} == {0}
-    leaked.rename(repo / "renamed.txt")
-    assert bb.capture(database, request_data, repo=repo).status == "COMMITTED"
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-C", str(repo), "-c", "user.name=Test"]
+            + ["-c", "user.email=test@example.invalid", *args],
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q")
+    (repo / "tracked.txt").write_text("baseline\n")
+    git("add", ".")
+    git("commit", "-qm", "baseline")
+    return repo, git
+
+
+def test_credential_shaped_names_are_redacted_not_fatal(database, request_data, tmp_path):
+    # One such file used to reject the whole snapshot, hiding every other change.
+    repo, _ = _git_repo(tmp_path)
+    (repo / "api_key=synthetic-private-value.txt").write_text("untracked")
+    (repo / "token=synthetic-other").write_text("")
+    (repo / "tracked.txt").write_text("edited\n")
+    (repo / "new-feature.py").write_text("x = 1\n")
+    result = bb.capture(database, request_data, repo=repo)
+    assert result.status == "COMMITTED"
+    [git_data] = [
+        o.data for o in bb.get_session(database, result.session_id).observations
+        if o.kind == "git"
+    ]
+    marker = "[redacted: credential-shaped name]"
+    assert git_data.untracked_files == (marker, marker, "new-feature.py")
+    assert git_data.unstaged_delta == ("tracked.txt",)
     assert bb.check_integrity(database).ok
+    stored = b"".join(
+        path.read_bytes() for path in database.parent.glob(database.name + "*")
+    )
+    assert b"synthetic-private-value" not in stored
+    assert b"synthetic-other" not in stored
+
+
+def test_credential_shaped_branch_name_is_redacted(database, request_data, tmp_path):
+    repo, git = _git_repo(tmp_path)
+    git("checkout", "-qb", "fix/password=synthetic-branch")
+    result = bb.capture(database, request_data, repo=repo)
+    [git_data] = [
+        o.data for o in bb.get_session(database, result.session_id).observations
+        if o.kind == "git"
+    ]
+    assert git_data.branch == "[redacted: credential-shaped name]"
+    assert git_data.commit_after  # the rest of the snapshot is intact
 
 
 def test_integrity_findings_are_typed_results(database, request_data):

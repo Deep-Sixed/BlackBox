@@ -19,7 +19,7 @@ from .api import (
     capture as capture_session,
 )
 from .errors import BlackBoxError, IntegrityError, SchemaError, ValidationError
-from .hooks import hook_requests, oversized_request, read_payload
+from .hooks import hook_requests, oversized_requests, read_payload
 from .models import CLAIM_RELATIONS
 
 
@@ -146,10 +146,8 @@ def run_hook(args) -> int:
     try:
         raw, content_digest = read_payload(sys.stdin.buffer)
         if raw is None:
-            event, git, repo = (
-                oversized_request(content_digest, producer=args.producer),
-                None,
-                None,
+            event, git, repo = oversized_requests(
+                content_digest, producer=args.producer, git=args.git
             )
         else:
             try:

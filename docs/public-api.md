@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.6.6
+# Supported public API — BlackBox 0.6.7
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -33,6 +33,9 @@ path can no longer route either around a shared directory. A reader opening a
 copy in such a directory now raises `DatabaseError`.
 Package 0.6.6 keeps schema v4; the observed repository's `core.ignoreCase`
 setting can no longer hide untracked files (below).
+Package 0.6.7 keeps schema v4; credential-shaped path and branch names in a Git
+observation are redacted instead of rejecting the whole snapshot, and an
+oversized hook payload still gets a `--git` snapshot (see [hooks](hooks.md)).
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -183,12 +186,16 @@ with the same request after the local observation problem is resolved; the exist
 durable reservation/failure history remains. A Git snapshot whose HEAD or index
 file changes while it is taken fails this way, since its staged and unstaged
 reads would describe different moments.
-When the Git observer's own metadata (a path or branch name) looks like a
-credential, capture raises `ObservationRejectedError`: an unchanged retry fails
-the same way, so rename or remove the offending path, then retry the same
-request. The session stays `FAILED_RETRYABLE` until then because that lifecycle
-state means the durable reservation remains reusable after remediation; the stored
-failure has `retryable=0`, matching the public error/CLI hint against blind retry.
+Since 0.6.7, a path or branch name in a Git observation that looks like a
+credential is replaced by the marker `[redacted: credential-shaped name]`, one
+marker per replaced entry, and the rest of the snapshot is recorded. Before, the
+whole capture raised `ObservationRejectedError`, so the observed actor could
+suppress every Git snapshot by creating one file named, for example, `token=1`.
+`ObservationRejectedError` remains in the API but the Git observer no longer
+raises it. Where it is raised, the session stays `FAILED_RETRYABLE` because that
+lifecycle state means the durable reservation remains reusable after remediation;
+the stored failure has `retryable=0`, matching the public error/CLI hint against
+blind retry.
 BlackBox does not perform retry loops.
 False retryability means inspect/remediate, not that repair is impossible. Disk
 full, unavailable storage and corruption must not trigger blind automatic retries.
