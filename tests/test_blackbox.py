@@ -495,9 +495,11 @@ def test_submodule_replaced_by_a_non_directory_counts_as_changed(repo, replaceme
     (root / "sub").rmdir()
     if replacement == "file":
         (root / "sub").write_text("not a submodule\n")
+        assert git("status", "--porcelain") == "T sub"
     else:
+        # Git reports a symlink here as a type change or, since 2.5x, refuses
+        # the path outright; either way it is not an unchanged submodule.
         (root / "sub").symlink_to("tracked.txt")
-    assert git("status", "--porcelain") == "T sub"
     result = collect_git(root)
     assert result["unstaged_delta"] == result["working_tree_delta"] == ["sub"]
 
