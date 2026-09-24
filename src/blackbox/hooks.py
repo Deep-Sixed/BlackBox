@@ -20,6 +20,43 @@ TURN_END_EVENTS = ("Stop", "SubagentStop", "SessionEnd")
 COMMAND_TOOLS = ("Bash",)
 
 
+def read_payload(stream) -> tuple[bytes | None, str]:
+    """Read one payload and its SHA-256 without buffering more than the limit.
+
+    Returns the bytes when they fit, else None: the rest is only hashed, so an
+    oversized payload costs bounded memory and is still identified by digest.
+    """
+    digest = hashlib.sha256()
+    head = stream.read(MAX_PAYLOAD_BYTES + 1)
+    digest.update(head)
+    if len(head) <= MAX_PAYLOAD_BYTES:
+        return head, digest.hexdigest()
+    while chunk := stream.read(1 << 20):
+        digest.update(chunk)
+    return None, digest.hexdigest()
+
+
+def oversized_request(content_digest: str, *, producer: str) -> dict:
+    """Record that an event arrived even though its payload was too large to parse.
+
+    Dropping it would let an agent hide a tool result by making it huge. The
+    event and tool names are unknown without parsing, so it is recorded under
+    its own name with the digest of every payload byte.
+    """
+    return {
+        "request_id": f"oversized:{uuid.uuid4().hex}",
+        "producer": producer,
+        "observations": [
+            {
+                "source": producer,
+                "kind": "activity",
+                "name": "OversizedHookPayload",
+                "content_digest": content_digest,
+            }
+        ],
+    }
+
+
 def _text(payload: dict, key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value:

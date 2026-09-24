@@ -19,7 +19,7 @@ from .api import (
     capture as capture_session,
 )
 from .errors import BlackBoxError, IntegrityError, SchemaError, ValidationError
-from .hooks import hook_requests
+from .hooks import hook_requests, oversized_request, read_payload
 
 
 def main() -> int:
@@ -143,12 +143,20 @@ def run_hook(args) -> int:
     a non-blocking error, with a bounded code on stderr.
     """
     try:
-        try:
-            event, git, repo = hook_requests(
-                sys.stdin.buffer.read(), producer=args.producer, git=args.git
+        raw, content_digest = read_payload(sys.stdin.buffer)
+        if raw is None:
+            event, git, repo = (
+                oversized_request(content_digest, producer=args.producer),
+                None,
+                None,
             )
-        except ValueError, TypeError, RecursionError:
-            raise ValidationError() from None
+        else:
+            try:
+                event, git, repo = hook_requests(
+                    raw, producer=args.producer, git=args.git
+                )
+            except ValueError, TypeError, RecursionError:
+                raise ValidationError() from None
         _capture_host_report(args.database, event)
         if git is not None:
             capture_session(args.database, git, repo=repo)

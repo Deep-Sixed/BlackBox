@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.6.2
+# Supported public API — BlackBox 0.6.3
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -22,6 +22,8 @@ Package 0.6.1 keeps schema v4 and fixes the Git observer's working-tree reads
 (below) and the CLI's handling of deeply nested input files.
 Package 0.6.2 keeps schema v4; the Git observer ignores the observed repository's
 replace refs, which could otherwise hide committed or staged changes.
+Package 0.6.3 keeps schema v4; `blackbox hook` records oversized payloads by
+digest instead of rejecting them, and a symlinked `.git` is accepted as in Git.
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.

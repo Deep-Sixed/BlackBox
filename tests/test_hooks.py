@@ -224,3 +224,44 @@ def test_host_reports_cannot_carry_claims_or_artifacts(database, extra):
     with pytest.raises(bb.ValidationError):
         _capture_host_report(database, request)
     assert not database.exists()
+
+
+def test_oversized_payload_is_recorded_by_digest_not_dropped(database):
+    from blackbox.hooks import MAX_PAYLOAD_BYTES
+
+    payload = tool_event(
+        "PostToolUse", tool_response={"stdout": "A" * (MAX_PAYLOAD_BYTES + 1)}
+    )
+    raw = json.dumps(payload).encode()
+    result = hook(database, raw)
+    assert (result.returncode, result.stdout, result.stderr) == (0, b"", b"")
+    (view,) = sessions(database).values()
+    assert view.session.request_id.startswith("oversized:")
+    (observation,) = view.observations
+    assert observation.data.name == "OversizedHookPayload"
+    assert observation.data.content_digest == hashlib.sha256(raw).hexdigest()
+    assert view.sources[0].authority == "host_reported"
+
+
+def test_payload_reader_never_buffers_past_the_limit(monkeypatch):
+    import io
+
+    from blackbox import hooks
+
+    monkeypatch.setattr(hooks, "MAX_PAYLOAD_BYTES", 8)
+
+    class Stream(io.BytesIO):
+        largest = 0
+
+        def read(self, size=-1):
+            Stream.largest = max(Stream.largest, size)
+            assert size != -1, "unbounded read"
+            return super().read(size)
+
+    raw = b"x" * (5 << 20)
+    assert hooks.read_payload(Stream(raw)) == (None, hashlib.sha256(raw).hexdigest())
+    assert Stream.largest <= 1 << 20
+    assert hooks.read_payload(Stream(b"12345678")) == (
+        b"12345678",
+        hashlib.sha256(b"12345678").hexdigest(),
+    )
