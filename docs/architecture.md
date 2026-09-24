@@ -28,10 +28,21 @@ filters on the observer's behalf and `assume-unchanged` flags cannot hide edits;
 see the [threat model](threat-model.md). Local process/OS ownership is
 the trust boundary; arbitrary code with database-file access is outside this model.
 
-Corrections, contests and retractions insert linked claims across sessions. The original claim is immutable.
-Only one superseding successor is permitted. A chronological event sequence and
-UTC recording times support reconstruction. Derived summaries are read-only views,
-never source records.
+Corrections, contests and retractions insert linked claims across sessions. The
+original claim is immutable. Only one superseding successor is permitted. A
+chronological event sequence and UTC recording times support reconstruction.
+Derived summaries are read-only views, never source records.
+
+Schema v2 adds atomic forward migration from released v1 databases and chained
+receipts for all canonical record types. Read-only handles never migrate. See the
+[SQLite contract](sqlite-contract.md) for validation, ordering and threat limits.
+
+Schema v3 adds two bounded relationship tables: attributed evidence-to-claim
+assertions and immutable newer-to-older claim relations. Actor assertion,
+observer observation and BlackBox persistence remain distinct. No new observer
+runtime or Actor/Observer/Evaluation/Trace entities are introduced. See
+[trace relationships](trace-relationships.md) for attribution, local clock/order,
+status precedence and the tool/process boundary for the first future observer.
 
 Host lifecycle hooks (`blackbox hook`) let an agent's host runtime report each
 prompt, tool call and turn end without the agent's involvement. Schema v4 gives
@@ -44,19 +55,7 @@ The Python library and CLI are the supported interfaces. Network transports,
 production deployment integration, retention/deletion, external authentication,
 and remote observer infrastructure are separate system concerns.
 
-Schema v2 adds atomic forward migration from released v1 databases and chained
-receipts for all canonical record types. Read-only handles never migrate. See the
-[SQLite contract](sqlite-contract.md) for validation, ordering and threat limits.
-
 The [public API](public-api.md) is the consumer boundary. It accepts validated
 input mappings and returns detached, frozen typed views. Storage handles,
 transaction helpers and migration functions stay internal. The CLI uses this
 same boundary; expected implementation failures become bounded BlackBox errors.
-
-
-Schema v3 adds two bounded relationship tables: attributed evidence-to-claim
-assertions and immutable newer-to-older claim relations. Actor assertion,
-observer observation and BlackBox persistence remain distinct. No new observer
-runtime or Actor/Observer/Evaluation/Trace entities are introduced. See
-[trace relationships](trace-relationships.md) for attribution, local clock/order,
-status precedence and the tool/process boundary for the first future observer.
