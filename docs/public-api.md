@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.6.5
+# Supported public API — BlackBox 0.6.6
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -31,6 +31,8 @@ Package 0.6.5 keeps schema v4; readers now refuse a database directory that othe
 local users could write, as writers already did, and a symlink on the database
 path can no longer route either around a shared directory. A reader opening a
 copy in such a directory now raises `DatabaseError`.
+Package 0.6.6 keeps schema v4; the observed repository's `core.ignoreCase`
+setting can no longer hide untracked files (below).
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -131,7 +133,10 @@ The public Pydantic result models are frozen and their collections are tuples:
   `GitObservation.untracked_files` lists untracked paths not ignored by a
   `.gitignore` in the working tree; since 0.6.4 `.git/info/exclude` and
   `core.excludesFile` are not applied, and an untracked `.gitignore` is always
-  listed, even when it ignores itself. A path marked with `git add -N`
+  listed, even when it ignores itself. Since 0.6.6 names and ignore rules are
+  matched case-sensitively even when the repository sets `core.ignoreCase`, so
+  on a case-insensitive filesystem a file renamed only in case may also be
+  listed as untracked. A path marked with `git add -N`
   (intent-to-add) counts as unstaged, not staged, as in Git.
 - Derived views: `SessionView` combines canonical projections and lifecycle status;
   `ClaimView` adds `active`, `superseded`, `contested` or `retracted` status to a claim.
