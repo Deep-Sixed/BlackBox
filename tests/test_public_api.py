@@ -1,5 +1,6 @@
 import importlib
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -41,7 +42,7 @@ def test_supported_exports_are_deliberate():
         "BaseModel",
     ):
         assert name not in bb.__all__
-    assert bb.__version__ == "0.6.4"
+    assert bb.__version__ == "0.6.5"
 
 
 def test_typed_detached_results(database, request_data):
@@ -406,3 +407,82 @@ def test_unresolvable_home_path_is_bounded(monkeypatch):
     assert "synthetic-private-home" not in "".join(
         traceback.format_exception(caught.value)
     )
+
+
+READERS = [
+    bb.get_timeline,
+    bb.get_claims,
+    bb.get_evidence_links,
+    bb.check_integrity,
+    bb.get_chain_head,
+]
+
+
+@pytest.mark.parametrize("operation", READERS)
+def test_readers_refuse_a_directory_other_users_can_write(
+    database, request_data, operation
+):
+    bb.initialize(database)
+    bb.capture(database, request_data)
+    database.parent.chmod(0o777)
+    with pytest.raises(bb.DatabaseError):
+        operation(database)
+
+
+def test_swapped_in_database_is_refused_before_it_can_pass_integrity(
+    database, request_data, tmp_path
+):
+    bb.initialize(database)
+    bb.capture(database, request_data)
+    forged = tmp_path / "elsewhere" / "blackbox.sqlite3"
+    bb.initialize(forged)
+    bb.capture(forged, {**request_data, "request_id": "forged-001"})
+    assert bb.check_integrity(forged).ok  # internally consistent
+    database.parent.chmod(0o777)  # another user could now replace the file
+    forged.replace(database)
+    with pytest.raises(bb.DatabaseError):
+        bb.check_integrity(database)
+    with pytest.raises(bb.DatabaseError):
+        bb.get_timeline(database)
+
+
+@pytest.mark.parametrize("operation", [bb.initialize, bb.check_integrity])
+def test_symlinked_parent_in_a_shared_directory_is_refused(
+    tmp_path, request_data, operation
+):
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    bb.initialize(private / "blackbox.sqlite3")
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    (shared / "dbdir").symlink_to(private)
+    with pytest.raises(bb.DatabaseError):
+        operation(shared / "dbdir" / "blackbox.sqlite3")
+
+
+def test_own_symlink_in_a_sticky_directory_is_accepted(tmp_path):
+    # Like /tmp on macOS: a sticky shared directory holding this user's symlink.
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    sticky = tmp_path / "sticky"
+    sticky.mkdir()
+    sticky.chmod(0o1777)
+    (sticky / "dbdir").symlink_to(private)
+    database = sticky / "dbdir" / "blackbox.sqlite3"
+    bb.initialize(database)
+    assert bb.check_integrity(database).ok
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs root to chown")
+def test_another_users_symlink_in_a_sticky_directory_is_refused(tmp_path):
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    sticky = tmp_path / "sticky"
+    sticky.mkdir()
+    sticky.chmod(0o1777)
+    link = sticky / "dbdir"
+    link.symlink_to(private)
+    os.lchown(link, 12345, 12345)  # its owner could repoint it
+    with pytest.raises(bb.DatabaseError):
+        bb.initialize(link / "blackbox.sqlite3")

@@ -21,32 +21,69 @@ def now() -> str:
 
 
 def private_directory(directory: Path) -> None:
-    """Refuse a database directory that another local user could write.
+    """Refuse a database directory that another local user could replace.
 
     Whoever can write the directory can replace or unlink the database despite its
-    0600 mode, or plant a WAL sidecar that SQLite replays on open. The directory
-    must be owned by this user (or root) and closed to group and other writes. An
-    ancestor may be shared only with the sticky bit, which stops other users
-    renaming entries they do not own.
+    0600 mode, or plant a WAL sidecar that SQLite replays on open. The path is
+    walked as written, one component at a time, following each symlink hop
+    itself: checking only the resolved path would miss a writable directory that
+    holds a symlink on the way. Every directory passed through must be owned by
+    this user (or root) and closed to group and other writes; one on the way may
+    be shared only with the sticky bit, which stops other users renaming entries
+    they do not own, so each symlink must be owned by this user (or root) too.
+    Replacement between this check and SQLite's open is not prevented.
     """
     uid = os.geteuid()
-    directory = directory.resolve()
-    info = directory.stat()
-    if info.st_uid not in (uid, 0) or info.st_mode & 0o022:
+
+    def refuse():
         raise DatabaseIssue("database directory must not be writable by other users")
-    for ancestor in directory.parents:
-        info = ancestor.stat()
-        if info.st_uid not in (uid, 0) or (
-            info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX
-        ):
-            raise DatabaseIssue("database directory must not be writable by other users")
+
+    def check(info: os.stat_result, final: bool) -> None:
+        if info.st_uid not in (uid, 0):
+            refuse()
+        if info.st_mode & 0o022 and (final or not info.st_mode & stat.S_ISVTX):
+            refuse()
+
+    current = Path("/")
+    pending = list(Path(directory).absolute().parts[1:])
+    check(os.lstat(current), not pending)
+    hops = 0
+    while pending:
+        name = pending.pop(0)
+        if name in ("", "."):
+            continue
+        if name == "..":
+            current = current.parent
+            check(os.lstat(current), not pending)
+            continue
+        candidate = current / name
+        info = os.lstat(candidate)
+        if stat.S_ISLNK(info.st_mode):
+            if info.st_uid not in (uid, 0):
+                refuse()
+            hops += 1
+            if hops > 40:
+                raise DatabaseIssue("too many symlinks in the database path")
+            target = Path(os.readlink(candidate))
+            if target.is_absolute():
+                current = Path("/")
+                check(os.lstat(current), False)
+            pending = [*target.parts[1 if target.is_absolute() else 0 :], *pending]
+            continue
+        if not stat.S_ISDIR(info.st_mode):
+            raise DatabaseIssue("database directory is not a directory")
+        check(info, not pending)
+        current = candidate
 
 
 def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
     path = Path(path).expanduser().absolute()
     if path.is_symlink():
         raise DatabaseIssue("database symlinks are not supported")
-    if not readonly:
+    if readonly:
+        # Readers must not trust a database another user could have swapped in.
+        private_directory(path.parent)
+    else:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         private_directory(path.parent)
         try:
