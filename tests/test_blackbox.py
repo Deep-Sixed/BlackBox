@@ -739,7 +739,10 @@ def add_submodule(repo):
     def advance(content):
         (sub / "a.txt").write_text(content)
         commit_all(subgit, content)
-        git("add", "sub")
+        # Newer Git's `add` skips a submodule whose .gitmodules says ignore=all.
+        commit = subgit("rev-parse", "HEAD")
+        git("update-index", "--cacheinfo", f"160000,{commit},sub")
+        assert git("ls-files", "--stage", "sub").split()[1] == commit
 
     subgit("init", "-q")
     (sub / "a.txt").write_text("a\n")
