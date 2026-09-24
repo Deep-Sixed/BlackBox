@@ -383,9 +383,32 @@ def untracked_paths(root: Path) -> list[str]:
     )
 
 
+def index_fingerprint(root: Path) -> str | None:
+    """SHA-256 of the index file, or None when there is none yet.
+
+    Staged and unstaged changes come from separate reads of the index; if it
+    changed in between, a change staged in that window would be in neither.
+    """
+    location = git(root, "rev-parse", "--git-path", "index", work_tree=root)
+    try:
+        handle = os.open(root / os.fsdecode(location.rstrip(b"\n")), OPEN_FILE)
+    except FileNotFoundError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            raise ValueError("Git index is not a regular file")
+        digest = hashlib.sha256()
+        for chunk in read_chunks(handle):
+            digest.update(chunk)
+        return digest.hexdigest()
+    finally:
+        os.close(handle)
+
+
 def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     location = Path(repo).expanduser().resolve()
     root = repository_root(location)
+    index = index_fingerprint(root)
     head = (
         git(root, "rev-parse", "--verify", "HEAD^{commit}", work_tree=root)
         .decode()
@@ -425,6 +448,8 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     }
     if git(root, "rev-parse", "HEAD", work_tree=root).decode().strip() != head:
         raise ValueError("Git HEAD changed during capture; retry")
+    if index_fingerprint(root) != index:
+        raise ValueError("Git index changed during capture; retry")
     try:
         safe_strings(result)
     except ValueError:
