@@ -22,8 +22,8 @@ from .models import safe_strings
 # executes arbitrary programs and can report which paths git treats as unchanged,
 # and never honour refs/replace/, which substitutes one object for another, so a
 # replaced baseline or HEAD commit could make committed or staged changes vanish.
-# Diffs likewise pass --ignore-submodules=none, which outranks diff.ignoreSubmodules
-# and .gitmodules `ignore` settings that would drop a changed gitlink.
+# Staged and committed deltas compare raw index/tree entries rather than asking
+# Git's diff policy, so submodule ignore settings cannot drop a changed gitlink.
 HARDENED_CONFIG = ("-c", "core.fsmonitor=false", "--no-replace-objects")
 
 
@@ -263,6 +263,55 @@ def unstaged_paths(root: Path) -> list[str]:
     return sorted(changed)
 
 
+def tree_entries(root: Path, commit: str) -> dict[str, tuple[bytes, bytes]]:
+    """Raw path -> (mode, object ID) for one commit tree."""
+
+    entries = {}
+    for record in git(
+        root, "ls-tree", "-r", "--full-tree", "-z", commit, work_tree=root
+    ).split(b"\0"):
+        if not record:
+            continue
+        meta, path = record.split(b"\t", 1)
+        mode, _kind, oid = meta.split(b" ")
+        entries[path.decode("utf-8", "surrogateescape")] = (mode, oid)
+    return entries
+
+
+def index_entries(root: Path) -> tuple[dict[str, tuple[bytes, bytes]], set[str]]:
+    """Raw stage-0 index entries plus paths with unresolved stages."""
+
+    entries = {}
+    unmerged = set()
+    for record in git(root, "ls-files", "--stage", "-z", work_tree=root).split(b"\0"):
+        if not record:
+            continue
+        meta, path = record.split(b"\t", 1)
+        mode, oid, stage = meta.split(b" ")
+        name = path.decode("utf-8", "surrogateescape")
+        if stage == b"0":
+            entries[name] = (mode, oid)
+        else:
+            unmerged.add(name)
+    return entries, unmerged
+
+
+def entry_delta(
+    left: dict[str, tuple[bytes, bytes]],
+    right: dict[str, tuple[bytes, bytes]],
+    *,
+    always: set[str] | None = None,
+) -> list[str]:
+    """Paths added, deleted, mode-changed, object-changed or explicitly unresolved."""
+
+    candidates = set(left) | set(right) | (always or set())
+    return sorted(
+        path
+        for path in candidates
+        if path in (always or set()) or left.get(path) != right.get(path)
+    )
+
+
 def untracked_paths(root: Path) -> list[str]:
     """Untracked paths, hidden only by ignore rules that are themselves visible.
 
@@ -320,35 +369,15 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
             .decode()
             .strip()
         )
-    staged = paths(
-        root,
-        "diff",
-        "--cached",
-        "--name-only",
-        "--no-renames",
-        "--ignore-submodules=none",
-        "-z",
-        head,
-        "--",
-        work_tree=root,
-    )
+    head_entries = tree_entries(root, head)
+    indexed, unmerged = index_entries(root)
+    staged = entry_delta(head_entries, indexed, always=unmerged)
     unstaged = unstaged_paths(root)
     result = {
         "commit_before": before,
         "commit_after": head,
         "branch": git(root, "branch", "--show-current", work_tree=root).decode().strip(),
-        "committed_delta": paths(
-            root,
-            "diff",
-            "--name-only",
-            "--no-renames",
-            "--ignore-submodules=none",
-            "-z",
-            before,
-            head,
-            "--",
-            work_tree=root,
-        )
+        "committed_delta": entry_delta(tree_entries(root, before), head_entries)
         if before
         else None,
         "staged_delta": staged,
