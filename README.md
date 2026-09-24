@@ -66,8 +66,11 @@ against, what it deliberately does not, and what a production deployment adds.
 digest covers, for independent verifiers.
 
 See [docs/sqlite-contract.md](docs/sqlite-contract.md) for schema v4, atomic
-upgrades from supported older schemas, and integrity-check semantics. Run `blackbox --database
-./blackbox.sqlite3 init` with writer access to upgrade before using read-only queries.
+upgrades from supported older schemas, and integrity-check semantics. Run
+`blackbox --database ./blackbox.sqlite3 init` with writer access to upgrade
+before using read-only queries. [docs/trace-relationships.md](docs/trace-relationships.md)
+covers the attributed evidence links and cross-session claim relations added in
+schema v3.
 
 ## Python integration
 
@@ -76,4 +79,4 @@ blackbox`. Use `initialize`, `capture`, `append_claim`, `get_session`,
 `get_timeline`, `get_claims`, `link_evidence`, `get_evidence_links`,
 `get_claim_relations`, `check_integrity`, and `get_chain_head`. See the
 [public API contract](docs/public-api.md) for input mappings, result types,
-bounded errors, retry behavior and migration ownership. Schema v3 adds [attributed evidence links and cross-session claim relations](docs/trace-relationships.md).
+bounded errors, retry behavior and migration ownership.

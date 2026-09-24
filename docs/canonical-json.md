@@ -69,9 +69,9 @@ with Python's `surrogateescape`, so each undecodable byte becomes U+DC80–U+DCF
 | Value | Canonical text |
 | --- | --- |
 | `{"b": 1, "a": [true, false, null], "c": {"z": "", "y": -7}}` | `{"a":[true,false,null],"b":1,"c":{"y":-7,"z":""}}` |
-| `"é"` | `"é"` |
-| `"😀"` | `"😀"` |
-| `{"é": 1, "z": 2, "Z": 3, "😀": 4, "￿": 5}` | `{"Z":3,"z":2,"é":1,"￿":5,"😀":4}` |
+| `"é"` | `"\u00e9"` |
+| `"😀"` | `"\ud83d\ude00"` |
+| `{"é": 1, "z": 2, "Z": 3, "😀": 4, "\uffff": 5}` | `{"Z":3,"z":2,"\u00e9":1,"\uffff":5,"\ud83d\ude00":4}` |
 
 The first example's SHA-256 is
 `5e54a62526e8157052a583f09d4a7ae62874ce98e8b7b4e7b2796685c80724a6`.

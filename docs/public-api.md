@@ -263,5 +263,5 @@ timeline, claims, attributed evidence links, cross-session retraction,
 integrity and chain-head anchoring. CLI smoke checks against the same installed
 wheel run `--help`, `init`, two `capture`s, a `hook` event, a cross-session `claim --relation
 retracts`, `claims`, `check`, `head` and `check --anchor`; evidence links have
-no CLI command. Released-v1 and
-released-v2 migration/rollback tests remain in the full suite.
+no CLI command. Migration and rollback tests against the released v1, v2 and
+v3 stores remain in the full suite.

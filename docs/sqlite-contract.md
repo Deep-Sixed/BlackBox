@@ -29,18 +29,26 @@ in `migrations/v002.py`. Schema v3 adds `claim_relations` and `evidence_links`.
 Schema v4 adds `host_reported` to the allowed `sources.authority` values; see
 [schema v4](#schema-v4-host-reported-authority).
 Fresh databases install v4 directly (`0 → 4`); existing stores use sequential
-`1 → 2 → 3 → 4`, `2 → 3 → 4` or `3 → 4` upgrades. Each historical definition remains frozen. There is no downgrade or automatic malformed-data repair.
+`1 → 2 → 3 → 4`, `2 → 3 → 4` or `3 → 4` upgrades. Each historical definition
+remains frozen. There is no downgrade or automatic malformed-data repair.
 
 Writer initialization (`blackbox init`, or a capture's writer open) holds
 `BEGIN IMMEDIATE`, rechecks the version under the write lock, validates the old
-schema, existing observation evidence and (from v2) record receipts, installs the additive schema, backfills
-receipts, appends metadata/history and advances `user_version`. All these changes
-commit together. Failure, including a write error, rolls them back. No canonical
-row, identifier, event sequence, authority or verification classification changes.
-The migration history has version, previous version, schema digest and installation
-time only. V1 had no migration journal: v2 records the real upgrade, without
-inventing a timestamp for a historical v1 installation. Fresh v4 records `0 → 4`.
+schema, existing observation evidence and (from v2) record receipts, installs
+the additive schema, backfills receipts, appends metadata/history and advances
+`user_version`. All these changes commit together. Failure, including a write
+error, rolls them back. No canonical row, identifier, event sequence, authority
+or verification classification changes. The migration history has version,
+previous version, schema digest and installation time only. V1 had no
+migration journal: v2 records the real upgrade, without inventing a timestamp
+for a historical v1 installation. Fresh v4 records `0 → 4`.
 History and metadata reject UPDATE/DELETE.
+
+Schema-v3 backfill creates relation rows for historical corrections, binds them
+to existing CLAIM events and appends new receipts. It preserves the entire old
+receipt prefix and original canonical rows/events. Missing or inconsistent claim
+events fail migration rather than receiving fabricated timestamps. See the
+[relationship contract](trace-relationships.md) for projections and status rules.
 
 Read-only connections use SQLite URI `mode=ro` and `query_only=ON`. They never
 migrate. V1/v2/v3 readers using current code must first arrange writer initialization;
@@ -72,11 +80,13 @@ subsequent capture.
 
 `blackbox check` checks SQLite integrity, foreign keys, v1 observation receipt
 coverage/digests, canonical record coverage/digests, orphan/duplicate identities,
-sequence continuity, chain continuity and relationship attribution/chronology. Results contain `ok`, `schema_version` and sorted,
-deduplicated error categories, plus (since package 0.5.0) the sequence of the
-first failing receipt. With `--anchor`, it also compares a previously exported
-chain head (`anchor_mismatch`, `anchor_missing`). Unreadable databases report `database_unavailable`;
-unrecognized/malformed schemas report `schema_integrity`, with null schema version.
+sequence continuity, chain continuity and relationship attribution/chronology.
+Results contain `ok`, `schema_version` and sorted, deduplicated error
+categories, plus (since package 0.5.0) the sequence of the first failing
+receipt. With `--anchor`, it also compares a previously exported chain head
+(`anchor_mismatch`, `anchor_missing`). Unreadable databases report
+`database_unavailable`; unrecognized/malformed schemas report
+`schema_integrity`, with null schema version.
 Results contain no evidence values, exception messages or paths. The CLI exits 1
 on failure. Schema v2 adds `schema_version` to the previous check result shape.
 
@@ -96,7 +106,8 @@ delete a consistent suffix of records and receipts. Such a rewrite is outside th
 local integrity model unless the operator anchors: `get_chain_head` exports the
 chain head, and `check_integrity(anchor=...)` detects any rewrite or truncation
 up to an anchor kept where the writer cannot change it. Records appended after
-the latest anchor remain unprotected against a hostile owner. Immutable SQL triggers guard ordinary writes, not arbitrary file access.
+the latest anchor remain unprotected against a hostile owner. Immutable SQL
+triggers guard ordinary writes, not arbitrary file access.
 The checker detects inconsistencies against locally stored metadata; it cannot
 prove complete history against a hostile owner. Receipt checking/backfill currently
 requires memory proportional to the stored records and migration holds a writer
@@ -105,18 +116,12 @@ lock for the backfill. No external observer authentication is introduced.
 ## Python consumer boundary
 
 Package 0.6.4 uses schema v4 (introduced by 0.6.0). Public reader operations raise
-`MigrationRequiredError` for v1/v2/v3; `initialize` and capture/claim/link writer operations
-may migrate. `check_integrity` returns typed findings when inspection succeeds
-and raises bounded errors when the database cannot be opened or validated.
+`MigrationRequiredError` for v1/v2/v3; `initialize` and capture/claim/link
+writer operations may migrate. `check_integrity` returns typed findings when
+inspection succeeds and raises bounded errors when the database cannot be opened
+or validated.
 The CLI continues to serialize these outcomes into its check-result envelope.
 See the [public API contract](public-api.md).
-
-
-Schema-v3 backfill creates relation rows for historical corrections, binds them
-to existing CLAIM events and appends new receipts. It preserves the entire old
-receipt prefix and original canonical rows/events. Missing or inconsistent claim
-events fail migration rather than receiving fabricated timestamps. See the
-[relationship contract](trace-relationships.md) for projections and status rules.
 
 ## Schema v4: host-reported authority
 
