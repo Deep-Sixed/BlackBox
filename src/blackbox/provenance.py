@@ -24,7 +24,17 @@ from .models import safe_strings
 # replaced baseline or HEAD commit could make committed or staged changes vanish.
 # Staged and committed deltas compare raw index/tree entries rather than asking
 # Git's diff policy, so submodule ignore settings cannot drop a changed gitlink.
-HARDENED_CONFIG = ("-c", "core.fsmonitor=false", "--no-replace-objects")
+# Case-insensitive matching (core.ignoreCase) would hide a new file whose name
+# differs only in case from a tracked path or an ignore rule; on a
+# case-insensitive filesystem, turning it off over-reports case-only renames
+# as untracked instead.
+HARDENED_CONFIG = (
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.ignoreCase=false",
+    "--no-replace-objects",
+)
 
 
 def environment() -> dict[str, str]:

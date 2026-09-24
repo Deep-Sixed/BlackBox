@@ -808,6 +808,22 @@ def test_untracked_files_cannot_hide_behind_invisible_ignore_rules(repo, tmp_pat
     ]
 
 
+def test_core_ignorecase_cannot_hide_untracked_files(repo):
+    root, git = repo
+    (root / ".gitignore").write_text("build/\n")
+    commit_all(git, "track .gitignore")
+    git("config", "core.ignoreCase", "true")
+    (root / "Tracked.txt").write_text("differs from tracked.txt only in case\n")
+    (root / "BUILD").mkdir()
+    (root / "BUILD" / "new.bin").write_text("matches build/ only in case\n")
+    # plain Git is fooled
+    assert git("ls-files", "--others", "--exclude-standard") == ""
+    assert git("status", "--porcelain") == ""
+    result = collect_git(root)
+    assert result["untracked_files"] == ["BUILD/new.bin", "Tracked.txt"]
+    assert result["working_tree_delta"] == []
+
+
 def test_intent_to_add_is_unstaged_like_in_git(repo):
     root, git = repo
     (root / "new").write_text("not staged yet\n")
