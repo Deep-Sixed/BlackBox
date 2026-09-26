@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.6.8
+# Supported public API — BlackBox 0.6.9
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -42,6 +42,10 @@ refused when the index file is only rewritten to refresh cached stat data. The
 Git observer never contacts a remote, so a partial clone cannot make it run a
 repository-configured fetch command, and a submodule replaced by a file or
 symlink counts as changed (below).
+Package 0.6.9 keeps schema v4; a branch name that is not valid UTF-8 is recorded
+(undecodable bytes as U+DC80–U+DCFF, as for paths) instead of failing the Git
+snapshot, and switching HEAD to another ref at the same commit while a snapshot
+is taken now fails it, like a commit change (below).
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -194,7 +198,9 @@ Busy means SQLite lock contention. Conflicting request reuse or a second
 superseding claim is a nonretryable conflict. An observer failure can be retried
 with the same request after the local observation problem is resolved; the existing
 durable reservation/failure history remains. A Git snapshot whose HEAD or index
-entries change while it is taken fails this way, since its staged and unstaged
+entries change while it is taken fails this way (since 0.6.9 HEAD also changes
+when it switches to another ref, or between a ref and a detached HEAD, at the
+same commit), since its staged and unstaged
 reads would describe different moments. Since 0.6.8 only the entries count (path,
 mode, object ID, stage and the intent-to-add flag): an index file rewritten just
 to refresh cached stat data, as `git status` does, no longer fails the snapshot.

@@ -26,6 +26,8 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          # Pin the uv binary too, not just the action; unpinned it falls back to latest.
+          version: "0.12.18"
           enable-cache: true
 
       - name: Install dependencies

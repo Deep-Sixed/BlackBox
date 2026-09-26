@@ -72,8 +72,12 @@ def git(repo: Path, *args: str, work_tree: Path | None = None) -> bytes:
 
 
 def text(root: Path, *args: str) -> str:
-    """One line of Git output for a command run against the worktree root."""
-    return git(root, *args, work_tree=root).decode().strip()
+    """One line of Git output for a command run against the worktree root.
+
+    Ref names are repository-controlled bytes, not necessarily UTF-8; decode
+    them like paths, so an undecodable branch name cannot fail the snapshot.
+    """
+    return git(root, *args, work_tree=root).decode("utf-8", "surrogateescape").strip()
 
 
 def paths(repo: Path, *args: str, work_tree: Path | None = None) -> set[str]:
@@ -422,7 +426,11 @@ def redact(result: dict) -> dict:
 def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     location = Path(repo).expanduser().resolve()
     root = repository_root(location)
+    # HEAD is both a commit and, unless detached, the ref it points at; a switch
+    # between two refs at the same commit must also count as HEAD moving.
+    head_ref = text(root, "rev-parse", "--symbolic-full-name", "HEAD")
     head = text(root, "rev-parse", "--verify", "HEAD^{commit}")
+    branch = text(root, "branch", "--show-current")
     before = None
     if baseline is not None:
         # Full object IDs only: no options, pathspecs, or moving symbolic refs.
@@ -437,7 +445,7 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
     result = {
         "commit_before": before,
         "commit_after": head,
-        "branch": text(root, "branch", "--show-current"),
+        "branch": branch,
         "committed_delta": entry_delta(tree_entries(root, before), head_entries)
         if before
         else None,
@@ -446,7 +454,10 @@ def collect_git(repo: str | Path, baseline: str | None = None) -> dict:
         "working_tree_delta": sorted(set(staged) | set(unstaged)),
         "untracked_files": untracked_paths(root),
     }
-    if text(root, "rev-parse", "HEAD") != head:
+    if (
+        text(root, "rev-parse", "--symbolic-full-name", "HEAD") != head_ref
+        or text(root, "rev-parse", "HEAD") != head
+    ):
         raise ValueError("Git HEAD changed during capture; retry")
     # Staged and unstaged changes come from separate reads of the index; if its
     # entries changed in between, a change staged in that window would be in
