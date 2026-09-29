@@ -10,8 +10,10 @@ import errno
 import hashlib
 import os
 import re
+import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 from ._signals import ObservationRejected
@@ -28,6 +30,8 @@ from .models import FULL_COMMIT_ID, SUSPICIOUS, safe_strings
 # differs only in case from a tracked path or an ignore rule; on a
 # case-insensitive filesystem, turning it off over-reports case-only renames
 # as untracked instead.
+GIT_SANDBOX_ENV = "BLACKBOX_GIT_SANDBOX"
+
 HARDENED_CONFIG = (
     "-c",
     "core.fsmonitor=false",
@@ -40,6 +44,12 @@ HARDENED_CONFIG = (
 def environment() -> dict[str, str]:
     # Inherited GIT_* variables can redirect -C to another repository or index.
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # The observer does not need operator/global Git configuration. Repository
+    # config remains visible because it is evidence, but system/global config
+    # must not inject helpers or policy into the observation process.
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["HOME"] = "/nonexistent"
+    env["XDG_CONFIG_HOME"] = "/nonexistent"
     # Observation must not write the observed repository's index.
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -54,13 +64,42 @@ def environment() -> dict[str, str]:
     return env
 
 
+def sandbox_command(command: list[str]) -> list[str]:
+    """Wrap a Git command in a fail-closed Linux bubblewrap sandbox when required."""
+    mode = os.environ.get(GIT_SANDBOX_ENV, "off")
+    if mode == "off":
+        return command
+    if mode != "required":
+        raise ValueError("invalid Git sandbox mode")
+    if not sys.platform.startswith("linux"):
+        raise ValueError("required Git sandbox is only supported on Linux")
+    bwrap = shutil.which("bwrap")
+    if bwrap is None:
+        raise ValueError("required Git sandbox is unavailable")
+    return [
+        bwrap,
+        "--die-with-parent",
+        "--unshare-net",
+        "--ro-bind",
+        "/",
+        "/",
+        "--tmpfs",
+        "/tmp",
+        "--",
+        *command,
+    ]
+
+
 def git(repo: Path, *args: str, work_tree: Path | None = None) -> bytes:
-    command = ["git", *HARDENED_CONFIG, "-C", str(repo)]
+    binary = shutil.which("git")
+    if binary is None:
+        raise ValueError("Git metadata collection failed")
+    command = [str(Path(binary).resolve()), *HARDENED_CONFIG, "-C", str(repo)]
     if work_tree is not None:
         # Command-line --work-tree outranks an observed repository's core.worktree.
         command.append(f"--work-tree={work_tree}")
     result = subprocess.run(
-        [*command, *args],
+        sandbox_command([*command, *args]),
         capture_output=True,
         check=False,
         env=environment(),
