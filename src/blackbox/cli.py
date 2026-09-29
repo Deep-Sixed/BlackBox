@@ -19,7 +19,7 @@ from .api import (
     capture as capture_session,
 )
 from .errors import BlackBoxError, IntegrityError, SchemaError, ValidationError
-from .hooks import digest_only_requests, hook_requests, read_payload
+from .hooks import digest_only_requests, hook_requests, load_hook_key, read_payload
 from .models import CLAIM_RELATIONS
 
 
@@ -144,14 +144,18 @@ def run_hook(args) -> int:
     a non-blocking error, with a bounded code on stderr.
     """
     try:
-        raw, content_digest = read_payload(sys.stdin.buffer)
+        key = load_hook_key()
+        raw, content_digest = read_payload(sys.stdin.buffer, key)
         # A payload that cannot be recorded by name is still recorded by digest:
         # dropping it would let the agent hide a tool call by shaping its payload.
         reason = "oversized" if raw is None else None
         if reason is None:
             try:
                 event, git, repo = hook_requests(
-                    raw, producer=args.producer, git=args.git
+                    raw,
+                    producer=args.producer,
+                    content_digest=content_digest,
+                    git=args.git,
                 )
             except ValueError, TypeError, RecursionError:
                 reason = "unreadable"
