@@ -71,10 +71,13 @@ def observation(
     kind: str,
     data: dict,
     *,
+    occurrence: str,
     local: bool = False,
 ) -> str:
     material = {"session": session, "source": source_id, "kind": kind, "data": data}
-    key = identity("obs", material)
+    # Multiplicity is evidence: two identical observations in one capture are
+    # distinct occurrences even though their canonical content is the same.
+    key = identity("obs", [material, occurrence])
     cursor = connection.execute(
         "INSERT INTO observations VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
         (key, session, source_id, kind, canonical(data), now()),
@@ -202,8 +205,16 @@ def ingest(
                             "Git metadata collection failed"
                         ) from None
                     source_id = source(connection, session, "blackbox.git", "local_git")
-                    observation(connection, session, source_id, "git", data, local=True)
-                for item in capture.observations:
+                    observation(
+                        connection,
+                        session,
+                        source_id,
+                        "git",
+                        data,
+                        occurrence="git",
+                        local=True,
+                    )
+                for ordinal, item in enumerate(capture.observations):
                     source_id = source(connection, session, item.source, authority)
                     observation(
                         connection,
@@ -211,6 +222,7 @@ def ingest(
                         source_id,
                         item.kind,
                         item.model_dump(mode="json"),
+                        occurrence=f"input:{ordinal}",
                     )
                 for item in capture.claims:
                     claim_row(connection, session, item)
