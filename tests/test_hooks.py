@@ -194,7 +194,7 @@ def test_invalid_payloads_are_recorded_by_digest_without_blocking_or_leaking(
     assert view.session.request_id.startswith("unreadable:")
     (observation,) = view.observations
     assert observation.data.name == "UnreadableHookPayload"
-    assert observation.data.content_digest == hashlib.sha256(payload).hexdigest()
+    assert observation.data.content_digest == hook_digest(database, payload)
     assert view.sources[0].authority == "host_reported"
     stored = b"".join(f.read_bytes() for f in database.parent.iterdir())
     for secret in (b"token=abc", b"hunter2", b"marker-7f3a"):
