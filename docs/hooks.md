@@ -51,7 +51,7 @@ Each event becomes one capture session holding one observation:
 | `producer`, `source` | `--producer`; the source's authority is `host_reported` |
 | `kind` | `command` for the `Bash` tool, otherwise `activity` |
 | `name` | `<event>:<tool_name>` for tool events, otherwise `<event>` |
-| `content_digest` | SHA-256 of the exact payload bytes the host delivered |
+| `content_digest` | HMAC-SHA-256 of the exact payload bytes the host delivered |
 | `exit_code`, `duration_ms` | `null`: hook payloads do not report them, and BlackBox does not make them up |
 
 With `--git`, a second session `<request_id>:git` holds the Git observation
@@ -60,8 +60,7 @@ separate session so that a failed snapshot, for example in a directory that is
 not a repository, cannot lose the event itself.
 
 The payload itself is never stored: tool inputs, tool output, prompts and file
-contents are only hashed. Someone who kept a copy of the payload can check it
-against `content_digest`; nothing else can be recovered from it. Because only
+contents are only hashed. Someone who kept a copy of the payload **and the external hook key** can check it against `content_digest`; a database copy alone cannot test low-entropy payload guesses. Because only
 the digest is stored, a payload containing credential-shaped text is still
 recorded. The credential filter applies to the stored fields (event name, tool
 name, session ID); an event whose tool name looks like a credential is
@@ -82,7 +81,7 @@ Since 0.6.8 the same holds for a payload that is not too large but cannot be
 recorded as a named event: one that is not JSON, nests deeper than the parser
 follows (the agent writes tool inputs, so it can shape one this way), lacks a
 required field, or carries a name the credential filter rejects. It is
-recorded as an `UnreadableHookPayload` observation with the digest of every
+recorded as an `UnreadableHookPayload` observation with the keyed digest of every
 payload byte, gets a `--git` snapshot like an oversized one, and the hook
 then exits 1 with `invalid_input` so a misconfigured host is still noticed.
 Before 0.6.8 such a payload was rejected and left no record.
@@ -125,3 +124,7 @@ Stdout always stays empty, because Claude Code adds the stdout of
 Each hook starts a Python process and waits on the database's write lock, so
 parallel tool calls queue briefly. A lock held longer than five seconds fails
 that event with `database_busy`.
+
+## Hook HMAC key
+
+Hook payload digests are keyed with HMAC-SHA-256. By default BlackBox creates a private 32-byte key at `~/.config/blackbox/hook-hmac.key`. Set `BLACKBOX_HOOK_HMAC_KEY_FILE` to place the key in operator-managed storage. Keep the key outside BlackBox database backups; possession of the database should not be enough to verify guesses for passwords or other low-entropy values that appeared only inside a host payload.
