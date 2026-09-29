@@ -1252,3 +1252,23 @@ def test_slow_git_observation_does_not_hold_writer_lock(
         release.set()
         assert slow_future.result(timeout=5)["status"] == "COMMITTED"
 
+
+
+def test_identical_observations_preserve_multiplicity(database):
+    observation = {"source": "runner", "kind": "test", "name": "pytest", "exit_code": 0}
+    result = ingest(
+        database,
+        {
+            "request_id": "duplicate-observations",
+            "producer": "runner",
+            "observations": [observation, observation],
+        },
+    )
+    record = reconstruct(database, result["session_id"])
+    assert len(record["observations"]) == 2
+    assert len(record["evidence"]) == 2
+    assert len(
+        [event for event in record["events"] if event["kind"] == "OBSERVATION"]
+    ) == 2
+    assert record["observations"][0]["data"] == record["observations"][1]["data"]
+    assert record["observations"][0]["id"] != record["observations"][1]["id"]
