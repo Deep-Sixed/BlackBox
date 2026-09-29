@@ -1178,6 +1178,43 @@ def test_machine_readable_schema_matches_model(capture_request):
         jsonschema.validate({**capture_request, "payload": {}}, schema)
 
 
+def test_required_git_sandbox_wraps_observer_and_unshares_network(monkeypatch):
+    from blackbox import provenance
+
+    monkeypatch.setenv("BLACKBOX_GIT_SANDBOX", "required")
+    monkeypatch.setattr(
+        provenance.shutil,
+        "which",
+        lambda name: "/usr/bin/bwrap" if name == "bwrap" else "/usr/bin/git",
+    )
+    command = provenance.sandbox_command(["/usr/bin/git", "status"])
+    assert command[:3] == ["/usr/bin/bwrap", "--die-with-parent", "--unshare-net"]
+    assert ["--ro-bind", "/", "/"] == command[3:6]
+    assert command[-3:] == ["--", "/usr/bin/git", "status"]
+
+
+def test_required_git_sandbox_fails_closed_when_bwrap_missing(monkeypatch):
+    from blackbox import provenance
+
+    monkeypatch.setenv("BLACKBOX_GIT_SANDBOX", "required")
+    monkeypatch.setattr(provenance.shutil, "which", lambda name: None)
+    with pytest.raises(ValueError, match="sandbox is unavailable"):
+        provenance.sandbox_command(["/usr/bin/git", "status"])
+
+
+def test_git_environment_ignores_system_and_global_config(monkeypatch):
+    from blackbox import provenance
+
+    monkeypatch.setenv("HOME", "/attacker-home")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/attacker-system")
+    env = provenance.environment()
+    assert env["HOME"] == "/nonexistent"
+    assert env["XDG_CONFIG_HOME"] == "/nonexistent"
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert "GIT_CONFIG_SYSTEM" not in env
+
+
+
 def test_identical_observations_preserve_multiplicity(database):
     observation = {"source": "runner", "kind": "test", "name": "pytest", "exit_code": 0}
     result = ingest(
@@ -1191,7 +1228,8 @@ def test_identical_observations_preserve_multiplicity(database):
     record = reconstruct(database, result["session_id"])
     assert len(record["observations"]) == 2
     assert len(record["evidence"]) == 2
-    assert len([event for event in record["events"] if event["kind"] == "OBSERVATION"]) == 2
+    assert len(
+        [event for event in record["events"] if event["kind"] == "OBSERVATION"]
+    ) == 2
     assert record["observations"][0]["data"] == record["observations"][1]["data"]
     assert record["observations"][0]["id"] != record["observations"][1]["id"]
-

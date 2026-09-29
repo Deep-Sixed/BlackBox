@@ -1,5 +1,7 @@
 import hashlib
+import hmac
 import json
+import os
 import subprocess
 import sys
 
@@ -18,6 +20,7 @@ def database(tmp_path):
 
 def hook(database, payload, *args, cwd=None):
     raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+    env = {**os.environ, "BLACKBOX_HOOK_HMAC_KEY_FILE": str(database.parent / "hook-hmac.key")}
     return subprocess.run(
         [sys.executable, "-m", "blackbox.cli", "--database", str(database)]
         + ["hook", *args],
@@ -25,7 +28,13 @@ def hook(database, payload, *args, cwd=None):
         capture_output=True,
         check=False,
         cwd=cwd,
+        env=env,
     )
+
+
+def hook_digest(database, raw):
+    key = (database.parent / "hook-hmac.key").read_bytes()
+    return hmac.new(key, raw, hashlib.sha256).hexdigest()
 
 
 def tool_event(event, tool="Bash", tool_use_id="toolu_01AbCdEf", **extra):
@@ -67,7 +76,7 @@ def test_tool_event_records_only_metadata_and_payload_digest(database):
         "name": "PostToolUse:Bash",
         "exit_code": None,
         "duration_ms": None,
-        "content_digest": hashlib.sha256(raw).hexdigest(),
+        "content_digest": hook_digest(database, raw),
     }
     # The host reported it; BlackBox did not witness the tool run.
     assert [s.authority for s in view.sources] == ["host_reported"]
@@ -185,7 +194,7 @@ def test_invalid_payloads_are_recorded_by_digest_without_blocking_or_leaking(
     assert view.session.request_id.startswith("unreadable:")
     (observation,) = view.observations
     assert observation.data.name == "UnreadableHookPayload"
-    assert observation.data.content_digest == hashlib.sha256(payload).hexdigest()
+    assert observation.data.content_digest == hook_digest(database, payload)
     assert view.sources[0].authority == "host_reported"
     stored = b"".join(f.read_bytes() for f in database.parent.iterdir())
     for secret in (b"token=abc", b"hunter2", b"marker-7f3a"):
@@ -205,7 +214,7 @@ def test_tool_call_cannot_hide_behind_input_nested_past_the_parser(database):
     assert json.loads(result.stderr) == {"error": "invalid_input", "retryable": False}
     (view,) = sessions(database).values()
     assert view.observations[0].data.name == "UnreadableHookPayload"
-    assert view.observations[0].data.content_digest == hashlib.sha256(raw).hexdigest()
+    assert view.observations[0].data.content_digest == hook_digest(database, raw)
 
 
 def test_hook_usage_errors_never_use_the_blocking_exit_code(database):
@@ -266,7 +275,7 @@ def test_oversized_payload_is_recorded_by_digest_not_dropped(database):
     assert view.session.request_id.startswith("oversized:")
     (observation,) = view.observations
     assert observation.data.name == "OversizedHookPayload"
-    assert observation.data.content_digest == hashlib.sha256(raw).hexdigest()
+    assert observation.data.content_digest == hook_digest(database, raw)
     assert view.sources[0].authority == "host_reported"
 
 
@@ -333,10 +342,26 @@ def test_payload_reader_never_buffers_past_the_limit(monkeypatch):
             assert size != -1, "unbounded read"
             return super().read(size)
 
+    key = b"k" * 32
     raw = b"x" * (5 << 20)
-    assert hooks.read_payload(Stream(raw)) == (None, hashlib.sha256(raw).hexdigest())
-    assert Stream.largest <= 1 << 20
-    assert hooks.read_payload(Stream(b"12345678")) == (
-        b"12345678",
-        hashlib.sha256(b"12345678").hexdigest(),
+    assert hooks.read_payload(Stream(raw), key) == (
+        None,
+        hmac.new(key, raw, hashlib.sha256).hexdigest(),
     )
+    assert Stream.largest <= 1 << 20
+    assert hooks.read_payload(Stream(b"12345678"), key) == (
+        b"12345678",
+        hmac.new(key, b"12345678", hashlib.sha256).hexdigest(),
+    )
+
+
+def test_hook_digest_is_not_public_sha256(database):
+    payload = tool_event("PostToolUse", tool_response={"stdout": "secret-adjacent"})
+    raw = json.dumps(payload).encode()
+    assert hook(database, raw).returncode == 0
+    (view,) = sessions(database).values()
+    stored = view.observations[0].data.content_digest
+    assert stored == hook_digest(database, raw)
+    assert stored != hashlib.sha256(raw).hexdigest()
+    assert (database.parent / "hook-hmac.key").stat().st_mode & 0o077 == 0
+

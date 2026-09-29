@@ -132,7 +132,9 @@ ordinary text.
   race matters only if permissions are loosened while BlackBox runs. An external
   anchor still detects a swapped database.
 - **Confidentiality.** Records are integrity-checked, not encrypted. Anyone who
-  can read the file can read its metadata.
+  can read the file can read its metadata. Host payloads are represented by an
+  HMAC-SHA-256 digest keyed from a separate local key, so the database alone is
+  not an offline oracle for guessing low-entropy payload contents.
 - **Availability and retention.** Deleting the file, filling the disk or
   withholding the database is outside the model. BlackBox has no retention,
   deletion or backup policy.
@@ -149,9 +151,13 @@ ordinary text.
 | Storage | One local SQLite file, WAL, `synchronous=FULL` | Backups and write-once storage for exported heads and database copies |
 | Time | Local recording clock | Trusted timestamping; bounded clock-skew handling |
 | Confidentiality | None beyond file permissions | Encryption at rest; access control on readers |
-| Observer isolation | Git runs as the BlackBox user, against the observed repository's own config | Run the observer with a sandboxed, minimal Git configuration |
+| Observer isolation | Git runs with system/global Git config disabled; `BLACKBOX_GIT_SANDBOX=required` additionally requires Linux bubblewrap, mounts the host filesystem read-only and unshares the network | Use `required` mode in hardened deployments and keep the BlackBox user/package outside the observed actor's control |
 | Canonical form | [BlackBox canonical JSON v1](canonical-json.md), not RFC 8785 | Independent verifiers implement that spec |
 | Platform | POSIX only; CI on Linux | Windows support would need its own ownership and path-safety checks |
 
 None of these change the mechanism. They harden where its assumptions are
 enforced.
+
+## Required Git-observer sandbox
+
+On Linux, set `BLACKBOX_GIT_SANDBOX=required` to make every Git observer subprocess run under bubblewrap with the filesystem mounted read-only, a private temporary directory, and a new network namespace. The mode is fail-closed: if bubblewrap is unavailable or cannot start, observation fails instead of silently running unsandboxed. The default remains `off` for portable local-core compatibility.
