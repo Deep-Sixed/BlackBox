@@ -82,3 +82,7 @@ blackbox`. Use `initialize`, `capture`, `append_claim`, `get_session`,
 `get_claim_relations`, `check_integrity`, and `get_chain_head`. See the
 [public API contract](docs/public-api.md) for input mappings, result types,
 bounded errors, retry behavior and migration ownership.
+
+### Hardened Git observation
+
+Linux deployments can set `BLACKBOX_GIT_SANDBOX=required` to require bubblewrap isolation for the built-in Git observer. Required mode is fail-closed and removes network access while mounting the host filesystem read-only. System/global Git configuration is ignored in all modes.
