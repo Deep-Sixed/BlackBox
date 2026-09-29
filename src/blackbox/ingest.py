@@ -184,25 +184,31 @@ def ingest(
                 append_receipt(connection, "sessions", session)
                 event(connection, session, "RESERVED", session)
         try:
+            # Repository observation can hash the entire tracked worktree. Do it
+            # without SQLite's writer lock so unrelated host events can still be
+            # durably reserved while a slow snapshot is in progress.
+            git_data = None
+            if repo is not None:
+                try:
+                    git_data = collect_git(repo, baseline)
+                except ObservationRejected:
+                    raise
+                except ValueError, OSError, subprocess.SubprocessError:
+                    raise ObservationIssue("Git metadata collection failed") from None
             with transaction(connection):
+                # Another process may have committed the same request while this
+                # process was observing Git outside the write transaction.
                 if state(connection, session) == "COMMITTED":
                     return {
                         "session_id": session,
                         "status": "COMMITTED",
                         "duplicate": True,
                     }
-                # The write lock serializes capture/retry for this local database.
-                if repo is not None:
-                    try:
-                        data = collect_git(repo, baseline)
-                    except ObservationRejected:
-                        raise
-                    except ValueError, OSError, subprocess.SubprocessError:
-                        raise ObservationIssue(
-                            "Git metadata collection failed"
-                        ) from None
+                if git_data is not None:
                     source_id = source(connection, session, "blackbox.git", "local_git")
-                    observation(connection, session, source_id, "git", data, local=True)
+                    observation(
+                        connection, session, source_id, "git", git_data, local=True
+                    )
                 for item in capture.observations:
                     source_id = source(connection, session, item.source, authority)
                     observation(
