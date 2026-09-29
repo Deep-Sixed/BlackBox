@@ -3,16 +3,19 @@
 The host runtime (for example Claude Code) runs `blackbox hook` on its own
 lifecycle events and pipes the event as JSON on stdin. The acting agent neither
 calls nor sees it. Only bounded metadata is kept: event and tool name, and a
-SHA-256 digest of the exact payload bytes. Tool inputs, outputs and prompts are
-hashed, not stored.
+HMAC-SHA-256 digest of the exact payload bytes. Tool inputs, outputs and prompts are
+keyed-hashed, not stored.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
+import stat
 import uuid
+from pathlib import Path
 
 MAX_PAYLOAD_BYTES = 32 * 1024 * 1024
 TOOL_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
@@ -24,14 +27,59 @@ DIGEST_ONLY_NAMES = {
     "unreadable": "UnreadableHookPayload",
 }
 
+HOOK_KEY_ENV = "BLACKBOX_HOOK_HMAC_KEY_FILE"
+DEFAULT_HOOK_KEY = "~/.config/blackbox/hook-hmac.key"
 
-def read_payload(stream) -> tuple[bytes | None, str]:
-    """Read one payload and its SHA-256 without buffering more than the limit.
+
+def load_hook_key(path: str | Path | None = None) -> bytes:
+    """Load or create the local HMAC key used for hook payload digests.
+
+    The key lives outside the BlackBox database so a database copy alone cannot
+    be used to test guesses for low-entropy secrets embedded in hook payloads.
+    """
+    location = Path(
+        path or os.environ.get(HOOK_KEY_ENV, DEFAULT_HOOK_KEY)
+    ).expanduser().absolute()
+    location.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    parent_mode = location.parent.stat().st_mode
+    if parent_mode & 0o022:
+        raise OSError("hook key directory must not be writable by other users")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        fd = os.open(location, flags)
+    except FileNotFoundError:
+        create = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+        fd = os.open(location, create, 0o600)
+        try:
+            key = os.urandom(32)
+            os.write(fd, key)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        fd = os.open(location, flags)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+            raise OSError("hook key must be a private regular file")
+        key = os.read(fd, 4096)
+    finally:
+        os.close(fd)
+    if len(key) < 32:
+        raise OSError("hook key is too short")
+    return key
+
+
+def payload_digest(raw: bytes, key: bytes) -> str:
+    return hmac.new(key, raw, hashlib.sha256).hexdigest()
+
+
+def read_payload(stream, key: bytes) -> tuple[bytes | None, str]:
+    """Read one payload and its HMAC-SHA-256 without buffering past the limit.
 
     Returns the bytes when they fit, else None: the rest is only hashed, so an
     oversized payload costs bounded memory and is still identified by digest.
     """
-    digest = hashlib.sha256()
+    digest = hmac.new(key, digestmod=hashlib.sha256)
     head = stream.read(MAX_PAYLOAD_BYTES + 1)
     digest.update(head)
     if len(head) <= MAX_PAYLOAD_BYTES:
@@ -81,7 +129,7 @@ def _text(payload: dict, key: str) -> str:
 
 
 def hook_requests(
-    raw: bytes, *, producer: str, git: bool = False
+    raw: bytes, *, producer: str, content_digest: str, git: bool = False
 ) -> tuple[dict, dict | None, str | None]:
     """Return the event capture, an optional Git capture and its repository.
 
@@ -115,7 +163,7 @@ def hook_requests(
                 "source": producer,
                 "kind": kind,
                 "name": name,
-                "content_digest": hashlib.sha256(raw).hexdigest(),
+                "content_digest": content_digest,
             }
         ],
     }
