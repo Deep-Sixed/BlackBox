@@ -1179,7 +1179,7 @@ def test_machine_readable_schema_matches_model(capture_request):
 
 
 def test_required_git_sandbox_wraps_observer_and_unshares_network(monkeypatch):
-    import blackbox.provenance as provenance
+    from blackbox import provenance
 
     monkeypatch.setenv("BLACKBOX_GIT_SANDBOX", "required")
     monkeypatch.setattr(
@@ -1194,7 +1194,7 @@ def test_required_git_sandbox_wraps_observer_and_unshares_network(monkeypatch):
 
 
 def test_required_git_sandbox_fails_closed_when_bwrap_missing(monkeypatch):
-    import blackbox.provenance as provenance
+    from blackbox import provenance
 
     monkeypatch.setenv("BLACKBOX_GIT_SANDBOX", "required")
     monkeypatch.setattr(provenance.shutil, "which", lambda name: None)
@@ -1203,7 +1203,7 @@ def test_required_git_sandbox_fails_closed_when_bwrap_missing(monkeypatch):
 
 
 def test_git_environment_ignores_system_and_global_config(monkeypatch):
-    import blackbox.provenance as provenance
+    from blackbox import provenance
 
     monkeypatch.setenv("HOME", "/attacker-home")
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/attacker-system")
