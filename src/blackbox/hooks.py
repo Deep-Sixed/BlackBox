@@ -49,14 +49,25 @@ def load_hook_key(path: str | Path | None = None) -> bytes:
         fd = os.open(location, flags)
     except FileNotFoundError:
         create = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-        fd = os.open(location, create, 0o600)
         try:
-            key = os.urandom(32)
-            os.write(fd, key)
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        fd = os.open(location, flags)
+            created = os.open(location, create, 0o600)
+        except FileExistsError:
+            # Another hook process won first-use key creation. Use that key
+            # rather than dropping this event.
+            fd = os.open(location, flags)
+        else:
+            try:
+                key = os.urandom(32)
+                os.write(created, key)
+                os.fsync(created)
+            finally:
+                os.close(created)
+            directory = os.open(location.parent, os.O_RDONLY | os.O_CLOEXEC)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            fd = os.open(location, flags)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
