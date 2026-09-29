@@ -1215,6 +1215,45 @@ def test_git_environment_ignores_system_and_global_config(monkeypatch):
 
 
 
+def test_slow_git_observation_does_not_hold_writer_lock(
+    database, capture_request, monkeypatch
+):
+    import importlib
+    import threading
+
+    module = importlib.import_module("blackbox.ingest")
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_collect(*args, **kwargs):
+        started.set()
+        assert release.wait(timeout=5)
+        return {
+            "commit_before": None,
+            "commit_after": "a" * 40,
+            "branch": "main",
+            "committed_delta": None,
+            "staged_delta": [],
+            "unstaged_delta": [],
+            "working_tree_delta": [],
+            "untracked_files": [],
+        }
+
+    monkeypatch.setattr(module, "collect_git", slow_collect)
+    slow = {**capture_request, "request_id": "slow-git"}
+    quick = {**capture_request, "request_id": "parallel-event"}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        slow_future = pool.submit(module.ingest, database, slow, repo=".")
+        assert started.wait(timeout=5)
+        quick_future = pool.submit(module.ingest, database, quick)
+        quick_result = quick_future.result(timeout=2)
+        assert quick_result["status"] == "COMMITTED"
+        release.set()
+        assert slow_future.result(timeout=5)["status"] == "COMMITTED"
+
+
+
 def test_identical_observations_preserve_multiplicity(database):
     observation = {"source": "runner", "kind": "test", "name": "pytest", "exit_code": 0}
     result = ingest(
