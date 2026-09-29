@@ -342,12 +342,16 @@ def test_payload_reader_never_buffers_past_the_limit(monkeypatch):
             assert size != -1, "unbounded read"
             return super().read(size)
 
+    key = b"k" * 32
     raw = b"x" * (5 << 20)
-    assert hooks.read_payload(Stream(raw)) == (None, hook_digest(database, raw))
+    assert hooks.read_payload(Stream(raw), key) == (
+        None,
+        hmac.new(key, raw, hashlib.sha256).hexdigest(),
+    )
     assert Stream.largest <= 1 << 20
-    assert hooks.read_payload(Stream(b"12345678")) == (
+    assert hooks.read_payload(Stream(b"12345678"), key) == (
         b"12345678",
-        hashlib.sha256(b"12345678").hexdigest(),
+        hmac.new(key, b"12345678", hashlib.sha256).hexdigest(),
     )
 
 
