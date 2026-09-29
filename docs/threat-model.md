@@ -132,7 +132,9 @@ ordinary text.
   race matters only if permissions are loosened while BlackBox runs. An external
   anchor still detects a swapped database.
 - **Confidentiality.** Records are integrity-checked, not encrypted. Anyone who
-  can read the file can read its metadata.
+  can read the file can read its metadata. Host payloads are represented by an
+  HMAC-SHA-256 digest keyed from a separate local key, so the database alone is
+  not an offline oracle for guessing low-entropy payload contents.
 - **Availability and retention.** Deleting the file, filling the disk or
   withholding the database is outside the model. BlackBox has no retention,
   deletion or backup policy.
