@@ -20,7 +20,7 @@ Recorder data.
 | Principals | `/etc/blackbox/principals.toml` | `root:blackbox-svc` 0640 |
 | Repository allowlist | `/etc/blackbox/repositories.toml` (optional) | `root:blackbox-svc` 0640 |
 | Backups | `/var/backups/blackbox/blackbox-*.sqlite3` | dir `blackbox-svc:blackbox-backup` 2750, files 0640 |
-| Anchor log | `~jarvis/.local/state/blackbox-anchors/anchors.jsonl` | `jarvis` 0600 |
+| Anchor log | `/var/lib/blackbox-anchors/anchors.jsonl` | `jarvis`, dir 0700, file 0600 |
 | Units | [`deploy/systemd/`](../deploy/systemd) | — |
 
 ## Install (Friday)
@@ -46,13 +46,21 @@ sudo ln -sfn /opt/blackbox/0.8.0 /opt/blackbox/current
 sudo install -d -o root -g blackbox-svc -m 0750 /etc/blackbox
 sudo install -o root -g blackbox-svc -m 0640 principals.toml /etc/blackbox/
 sudo install -d -o blackbox-svc -g blackbox-backup -m 2750 /var/backups/blackbox
+# Let the backup reader (evecor-backup runs as jarvis) read the copies through an
+# ACL. A group alone is not enough while jarvis's user manager predates the
+# group membership (see "Production notes" below).
+sudo setfacl -m u:jarvis:rx -m d:u:jarvis:r /var/backups/blackbox
 
 # Units.
 sudo install -m 0644 deploy/systemd/blackboxd.service \
-     deploy/systemd/blackbox-backup.{service,timer} /etc/systemd/system/
-sudo systemd-analyze verify /etc/systemd/system/blackboxd.service
+     deploy/systemd/blackbox-backup.{service,timer} \
+     deploy/systemd/blackbox-anchor.{service,timer} /etc/systemd/system/
+sudo systemd-analyze verify /etc/systemd/system/blackbox*.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now blackboxd.service blackbox-backup.timer
+sudo systemctl enable --now blackboxd.service
+# After the anchor token exists (see below), run each job once, then enable.
+sudo systemctl start blackbox-backup.service blackbox-anchor.service
+sudo systemctl enable --now blackbox-backup.timer blackbox-anchor.timer
 ```
 
 Dependencies come only from `uv.lock`, with hashes, so the host never resolves
@@ -130,15 +138,16 @@ writes the reason to stderr and to syslog (`blackbox-hook`).
   verified with `integrity_check` and the receipt chain, renamed atomically,
   and the newest 14 are kept. The copies are 0640, so `evecor-backup` (as a
   `blackbox-backup` member) can include them.
-- **Anchors:** `blackbox-anchor.timer` is a `jarvis` user unit. Every 15
-  minutes it appends the chain head to the anchor log with
+- **Anchors:** `blackbox-anchor.timer` is a system unit that runs as `jarvis`
+  (with `blackbox-clients` as a supplementary group). Every 15 minutes it
+  appends the chain head to `/var/lib/blackbox-anchors/anchors.jsonl` with
   `blackbox head --append`, which writes only successful heads.
-  `blackbox-svc` cannot reach that log. The protection this does and does not
+  `blackbox-svc` cannot read, append to, truncate, delete or replace that log. The protection this does and does not
   give is described in [design/service.md §13.1](design/service.md).
 - **Verify at any time:**
   ```bash
   blackbox --socket $S --token-file ~/.config/blackbox/anchor.token \
-           check --anchor ~/.local/state/blackbox-anchors/anchors.jsonl
+           check --anchor /var/lib/blackbox-anchors/anchors.jsonl
   ```
 - **Restore:**
   1. `sudo systemctl stop blackboxd`
@@ -160,6 +169,12 @@ writes the reason to stderr and to syslog (`blackbox-hook`).
   under `~jarvis`. BlackBox refuses to open a database below a directory that
   other users can write, and the CLI then reports `database_unavailable`. Check
   every parent directory: a shared cache directory, for example, does not qualify.
+- **Off-site:** `evecor-backup` (nightly restic) includes `/var/backups/blackbox`
+  and `/var/lib/blackbox-anchors`. After each snapshot it restores the newest
+  copy that predates the run, compares it byte-for-byte, and runs
+  `blackbox check` on it in a private directory. It fails if the newest copy is
+  older than 48 hours, so a stopped backup timer surfaces in its alerting. It
+  never reads the live database.
 
 ## Monitoring
 
@@ -193,6 +208,20 @@ status, uid and duration, never payloads or tokens.
 | Write queue full | `503` + `Retry-After` |
 | Oversized headers or body, chunked body, slow client | `431` / `413` / `411` / `408` |
 | Daemon crash | Committed events persist (WAL, `synchronous=FULL`); a partial batch is never committed; retries with the same key are safe |
+
+## Production notes
+
+- **Stale groups in user managers.** A `systemd --user` instance keeps the
+  groups it started with. After `usermod -aG`, units in that user's manager
+  still lack the new groups until the manager restarts (normally at the next
+  full logout or a reboot). This is why the anchor job is a system unit with
+  `SupplementaryGroups=` and the backup reader uses an ACL.
+- **Temporary verification principals.** For post-deployment tests, add a
+  separate principal with a token file, run the tests, then remove its section,
+  `systemctl reload blackboxd`, confirm its token gets `401`, and delete the
+  token file. Its test events stay in the store under its producer name.
+- **No producers by default.** A fresh deployment has only read principals
+  (anchor, operator). Each producer gets its own principal when it is approved.
 
 ## Security notes
 

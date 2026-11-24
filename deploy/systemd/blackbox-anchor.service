@@ -1,13 +1,26 @@
-# USER unit for an account other than blackbox-svc (on Friday: jarvis).
-# Install to ~/.config/systemd/user/. Appends the receipt-chain head to an
-# anchor log blackbox-svc cannot reach, so a rewrite of the database up to the
-# newest anchor is detectable (`blackbox check --anchor`). See the trust
-# boundary in docs/design/service.md section 13.1.
+# SYSTEM unit that runs as the anchor owner: an account other than
+# blackbox-svc (on Friday: jarvis). Install to /etc/systemd/system/.
+# It appends the receipt-chain head to an anchor log that blackbox-svc cannot
+# reach, so a rewrite of the database up to the newest anchor is detectable
+# (`blackbox check --anchor`). See the trust boundary in docs/design/service.md
+# section 13.1.
+#
+# Why a system unit and not a user unit: the anchor owner must be in
+# blackbox-clients to open the socket. A user manager that started before that
+# group membership was granted keeps its old groups until it restarts, so a user
+# unit would fail with EACCES. SupplementaryGroups= below sets the group
+# directly. It also removes the dependency on lingering.
 [Unit]
-Description=Export the BlackBox receipt-chain head to the local anchor log
+Description=Export the BlackBox receipt-chain head to the anchor log
+After=blackboxd.service
+Requires=blackboxd.service
 
 [Service]
 Type=oneshot
+User=jarvis
+Group=jarvis
+SupplementaryGroups=blackbox-clients
+# /var/lib/blackbox-anchors, owned by the anchor owner, 0700; the log is 0600.
 StateDirectory=blackbox-anchors
 StateDirectoryMode=0700
 UMask=0077
@@ -15,5 +28,17 @@ UMask=0077
 # exits non-zero and shows in the journal and the timer status.
 ExecStart=/opt/blackbox/current/bin/blackbox \
     --socket /run/blackbox/blackbox.sock \
-    --token-file %h/.config/blackbox/anchor.token \
+    --token-file /home/jarvis/.config/blackbox/anchor.token \
     head --append ${STATE_DIRECTORY}/anchors.jsonl
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
