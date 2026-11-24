@@ -1,0 +1,30 @@
+# /etc/blackbox/principals.toml — root:blackbox-svc, mode 0640.
+# Every principal needs BOTH a token (stored here only as its SHA-256) and a
+# connecting uid listed in `uids`. Generate a token with `blackbox token new`;
+# give the token to the client in a 0600 file and put the hash here.
+# Rotation: list the current and the next hash, `systemctl reload blackboxd`,
+# move the client to the new token, then remove the old hash and reload again.
+# Revocation: remove the hash and reload. An invalid file is rejected on reload
+# and the running set stays in force.
+#
+# Scopes: events:write, events:read, host:report, metrics:read.
+# can_read: producers whose events this principal may read ("*" for all);
+# default is only its own.
+
+[principals.claude-code-hooks]
+uids = [1000]                      # jarvis: Claude Code host hooks
+scopes = ["host:report"]
+token_sha256 = ["<sha256 from `blackbox token new`>"]
+
+[principals.anchor]
+uids = [1000]                      # jarvis: blackbox-anchor.timer
+scopes = ["events:read"]
+can_read = []                      # chain head and integrity only
+token_sha256 = ["<sha256>"]
+
+[principals.operator]
+uids = [1000]
+scopes = ["events:read", "metrics:read"]
+can_read = ["*"]
+token_sha256 = ["<sha256>"]
+read_rate = { per_second = 20, burst = 60 }

@@ -48,6 +48,10 @@ def main(wheel):
         )
         cli = environment / "bin/blackbox"
         subprocess.run([str(cli), "--help"], cwd=root, check=True, capture_output=True)
+        daemon = environment / "bin/blackboxd"
+        subprocess.run(
+            [str(daemon), "--help"], cwd=root, check=True, capture_output=True
+        )
         command = [str(cli), "--database", str(root / "smoke.sqlite3")]
         subprocess.run([*command, "init"], cwd=root, check=True, capture_output=True)
 
@@ -107,7 +111,7 @@ def main(wheel):
         assert hook_session["sources"][0]["authority"] == "host_reported"
         intact = {
             "ok": True,
-            "schema_version": 4,
+            "schema_version": 5,
             "errors": [],
             "first_broken_sequence": None,
         }

@@ -72,6 +72,19 @@
           "default": null,
           "title": "Content Digest"
         },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
         "duration_ms": {
           "anyOf": [
             {
@@ -110,6 +123,58 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
           "title": "Name",
           "type": "string"
+        },
+        "occurred_at": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Occurred At"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "success",
+                "failure",
+                "error",
+                "cancelled",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "enum": [
+                "debug",
+                "info",
+                "notice",
+                "warning",
+                "error",
+                "critical"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Severity"
         },
         "source": {
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",

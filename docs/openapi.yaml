@@ -1,0 +1,340 @@
+openapi: 3.1.0
+info:
+  title: BlackBox API
+  version: "1"
+  summary: Operational event recording and retrieval for blackboxd.
+  description: |
+    Served by `blackboxd` as HTTP/1.1 over the Unix socket
+    `/run/blackbox/blackbox.sock`. There is no TCP listener.
+
+    **Authentication:** every operation except health, ready and version needs
+    `Authorization: Bearer <token>`. The connecting process's uid (taken by the
+    server from SO_PEERCRED) must also be registered for that token's
+    principal. Both checks are required, and any failure is `401`.
+
+    **Errors:** the body is `{"error": "<code>"}` and never echoes input.
+    `503` and `429` carry `Retry-After`.
+
+    **Limits:**
+    - headers: 16 KiB
+    - body: 1 MiB, and `Content-Length` is required (chunked bodies are refused)
+    - batch: 1,000 events
+    - page: 500 events
+    - connection deadline: 10 s total, 5 s idle
+    - per-principal request rates (default: writes 50/s with a burst of 200,
+      reads 20/s with a burst of 60)
+
+    Every request gets one response, followed by `Connection: close`.
+
+    There are no update or delete operations.
+servers:
+  - url: http://localhost
+    description: "Unix socket: curl --unix-socket /run/blackbox/blackbox.sock http://localhost/..."
+security:
+  - bearer: []
+paths:
+  /api/v1/events:
+    post:
+      summary: Submit one event
+      description: |
+        `idempotency_key` is scoped to the calling principal. Repeating the
+        same body returns `200` with the same ids. Reusing a key with
+        different content returns `409`.
+      x-scope: events:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/EventSubmission"}
+            example:
+              idempotency_key: forge-2026-11-24T08:00:00Z-1
+              source: contextforge
+              type: tool.invoke
+              outcome: success
+              severity: info
+              occurred_at: "2026-11-24T08:00:00.123456Z"
+              correlation_id: req-42
+              duration_ms: 18
+      responses:
+        "201": {$ref: "#/components/responses/Recorded"}
+        "200": {$ref: "#/components/responses/Recorded"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "411": {$ref: "#/components/responses/Error"}
+        "413": {$ref: "#/components/responses/Error"}
+        "415": {$ref: "#/components/responses/Error"}
+        "422": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+    get:
+      summary: Search events
+      description: |
+        Returns events from committed captures only, in recording order.
+        `next_cursor` continues the same query. A principal sees only the
+        producers in its `can_read` list.
+      x-scope: events:read
+      parameters:
+        - {name: since, in: query, schema: {$ref: "#/components/schemas/Instant"}}
+        - {name: until, in: query, description: exclusive, schema: {$ref: "#/components/schemas/Instant"}}
+        - {name: time, in: query, schema: {enum: [recorded, occurred], default: recorded}}
+        - {name: source, in: query, schema: {$ref: "#/components/schemas/Identifier"}}
+        - {name: producer, in: query, schema: {$ref: "#/components/schemas/Identifier"}}
+        - {name: type, in: query, schema: {$ref: "#/components/schemas/Identifier"}}
+        - {name: kind, in: query, schema: {enum: [command, test, activity]}}
+        - {name: severity, in: query, schema: {$ref: "#/components/schemas/Severity"}}
+        - {name: outcome, in: query, schema: {$ref: "#/components/schemas/Outcome"}}
+        - {name: correlation_id, in: query, schema: {$ref: "#/components/schemas/Identifier"}}
+        - {name: authority, in: query, schema: {enum: [caller_asserted, host_reported]}}
+        - {name: order, in: query, schema: {enum: [asc, desc], default: asc}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+        - {name: cursor, in: query, schema: {type: string, maxLength: 512}}
+      responses:
+        "200":
+          description: A page of events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events, next_cursor]
+                properties:
+                  events: {type: array, items: {$ref: "#/components/schemas/Event"}}
+                  next_cursor: {type: [string, "null"]}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "422": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
+  /api/v1/events/batch:
+    post:
+      summary: Submit up to 1,000 events atomically
+      description: All events are recorded, or none.
+      x-scope: events:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [idempotency_key, events]
+              properties:
+                idempotency_key: {$ref: "#/components/schemas/IdempotencyKey"}
+                events:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items: {$ref: "#/components/schemas/EventIn"}
+      responses:
+        "201": {$ref: "#/components/responses/Recorded"}
+        "200": {$ref: "#/components/responses/Recorded"}
+        "409": {$ref: "#/components/responses/Error"}
+        "422": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/v1/events/{event_id}:
+    get:
+      summary: Get one event
+      description: Unknown events and events the caller may not read both return `404`.
+      x-scope: events:read
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema: {type: string, pattern: "^obs_[a-f0-9]{64}$"}
+      responses:
+        "200":
+          description: The event.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Event"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/v1/host-reports:
+    post:
+      summary: Record a host lifecycle-hook report (host_reported authority)
+      description: |
+        Used by `blackbox --socket ... hook`. The capture's producer is replaced
+        by the authenticated principal, and its request id is namespaced by it.
+        `git_cwd` requests a snapshot by blackboxd's own Git observer. The
+        snapshot is taken only inside an operator-allowlisted repository and
+        only under the bubblewrap sandbox. The response's `git` field reports
+        what happened to it.
+      x-scope: host:report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [capture]
+              properties:
+                capture: {$ref: "../schemas/capture.schema.json"}
+                git_cwd: {type: string, maxLength: 4096}
+      responses:
+        "201":
+          description: Recorded.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/Recorded"}
+                  - type: object
+                    properties:
+                      git: {enum: [not_requested, not_allowlisted, recorded, failed]}
+  /api/v1/integrity:
+    get:
+      summary: Check the receipt chain, optionally against an exported anchor
+      x-scope: events:read
+      parameters:
+        - {name: sequence, in: query, schema: {type: integer, minimum: 0}}
+        - {name: digest, in: query, schema: {type: string, pattern: "^[a-f0-9]{64}$"}}
+      responses:
+        "200":
+          description: Integrity result (`ok` false lists errors such as `anchor_mismatch`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  schema_version: {type: integer}
+                  errors: {type: array, items: {type: string}}
+                  first_broken_sequence: {type: [integer, "null"]}
+  /api/v1/chain-head:
+    get:
+      summary: Current receipt-chain head, to keep as an external anchor
+      x-scope: events:read
+      responses:
+        "200":
+          description: Chain head.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChainHead"}
+  /api/v1/health:
+    get:
+      summary: Process is up
+      security: []
+      responses:
+        "200": {description: "`{\"status\": \"ok\"}`"}
+  /api/v1/ready:
+    get:
+      summary: Store opened, migrated and integrity-verified
+      security: []
+      responses:
+        "200": {description: "`{\"status\": \"ready\"}`"}
+        "503": {description: "`{\"status\": \"not_ready\", \"reason\": \"<code>\"}`"}
+  /api/v1/version:
+    get:
+      summary: Package, schema and API version
+      security: []
+      responses:
+        "200":
+          description: Versions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: {type: string}
+                  schema_version: {type: integer}
+                  api: {const: v1}
+  /metrics:
+    get:
+      summary: Prometheus text exposition
+      x-scope: metrics:read
+      responses:
+        "200":
+          description: Metrics.
+          content:
+            text/plain: {}
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: Token from `blackbox token new`; also bound to the caller's uid.
+  responses:
+    Recorded:
+      description: Recorded (`201`) or an identical retry (`200`, `duplicate` true).
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Recorded"}
+    Error:
+      description: Bounded error code; input is never echoed.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error: {type: string}
+  schemas:
+    Identifier: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"}
+    IdempotencyKey: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,94}$"}
+    Instant:
+      type: string
+      pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"
+      description: UTC with Z. Stored occurred_at values are normalized to 6 fraction digits.
+    Outcome: {enum: [success, failure, error, cancelled, unknown]}
+    Severity: {enum: [debug, info, notice, warning, error, critical]}
+    EventIn:
+      type: object
+      additionalProperties: false
+      required: [source, type]
+      description: |
+        Metadata only. String values that look like credentials, URLs or keys
+        are rejected (`422`).
+      properties:
+        source: {$ref: "#/components/schemas/Identifier", description: component the event is about}
+        type: {$ref: "#/components/schemas/Identifier", description: what happened}
+        kind: {enum: [command, test, activity], default: activity}
+        outcome: {$ref: "#/components/schemas/Outcome"}
+        severity: {$ref: "#/components/schemas/Severity"}
+        occurred_at:
+          $ref: "#/components/schemas/Instant"
+          description: Producer clock. At most 5 minutes ahead of BlackBox's clock.
+        correlation_id: {$ref: "#/components/schemas/Identifier"}
+        exit_code: {type: integer}
+        duration_ms: {type: integer, minimum: 0}
+        content_digest: {type: string, pattern: "^[a-f0-9]{64}$"}
+    EventSubmission:
+      allOf:
+        - {$ref: "#/components/schemas/EventIn"}
+        - type: object
+          required: [idempotency_key]
+          properties:
+            idempotency_key: {$ref: "#/components/schemas/IdempotencyKey"}
+    Recorded:
+      type: object
+      required: [session_id, event_ids, duplicate]
+      properties:
+        session_id: {type: string}
+        event_id: {type: string, description: single-event submissions only}
+        event_ids: {type: array, items: {type: string}}
+        duplicate: {type: boolean}
+    Event:
+      type: object
+      properties:
+        event_id: {type: string}
+        session_id: {type: string}
+        request_id: {type: string, description: "<principal>:<idempotency_key> for API events"}
+        producer: {type: string, description: authenticated principal that submitted it}
+        source: {type: string}
+        authority: {enum: [caller_asserted, host_reported]}
+        verification: {enum: [unverified, locally_observed]}
+        kind: {type: string}
+        type: {type: string}
+        outcome: {type: [string, "null"]}
+        severity: {type: [string, "null"]}
+        occurred_at: {type: [string, "null"]}
+        recorded_at: {type: string, description: BlackBox clock (UTC, +00:00)}
+        correlation_id: {type: [string, "null"]}
+        exit_code: {type: [integer, "null"]}
+        duration_ms: {type: [integer, "null"]}
+        content_digest: {type: [string, "null"]}
+    ChainHead:
+      type: object
+      required: [sequence, digest]
+      properties:
+        sequence: {type: integer}
+        digest: {type: string, pattern: "^[a-f0-9]{64}$"}

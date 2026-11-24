@@ -46,14 +46,14 @@ def test_v4_changes_only_the_source_authority_check():
 
 def test_v3_upgrade_preserves_every_record_and_receipt(v3_database, released_v3):
     before = snapshot(v3_database)
-    assert bb.initialize(v3_database).schema_version == 4
+    assert bb.initialize(v3_database).schema_version == 5
     after = snapshot(v3_database)
     # Widening a CHECK rewrites nothing: no record, receipt or event is added.
     for table in (*RECORD_FIELDS, "record_receipts"):
         assert after[table] == before[table]
     for table in ("schema_metadata", "schema_migrations"):
         assert after[table][: len(before[table])] == before[table]
-        assert [row[0] for row in after[table][len(before[table]) :]] == [4]
+        assert [row[0] for row in after[table][len(before[table]) :]] == [4, 5]
     for original in released_v3[1]["records"]:
         view = bb.get_session(v3_database, original["session"]["id"])
         assert view.model_dump(mode="json") == original
@@ -121,7 +121,7 @@ def test_v4_failure_rolls_back_and_actual_v3_release_still_reads(
 
     def reject_final(db, version):
         original_validate(db, version)
-        if version == 4:
+        if version == 5:
             raise RuntimeError("final validation failure")
 
     if failure == "final_validation":

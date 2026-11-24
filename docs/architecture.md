@@ -54,7 +54,10 @@ unverified, because BlackBox did not witness the action. BlackBox stores a
 payload digest, not the payload, and never blocks the observed action. See
 [hooks](hooks.md).
 
-The Python library and CLI are the supported interfaces. Network transports,
+The Python library, the CLI and, since 0.8.0, the `blackboxd` local service
+([service](service.md)) are the supported interfaces. The service owns the
+database and calls the same public API, so it adds no second persistence path.
+Network transports,
 production deployment integration, retention/deletion, external authentication,
 and remote observer infrastructure are separate system concerns.
 

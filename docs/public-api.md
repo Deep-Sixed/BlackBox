@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.7.0
+# Supported public API — BlackBox 0.8.0
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -51,6 +51,12 @@ payload digests are keyed with an external HMAC key ([hooks](hooks.md#hook-hmac-
 `BLACKBOX_GIT_SANDBOX=required` runs the Git observer under bubblewrap and fails
 closed, Git observation runs before the SQLite writer lock is taken, and identical
 observations in one capture are kept as separate records.
+Package 0.8.0 uses schema v5, which adds query indexes only. Observations
+accept four optional fields: `outcome`, `severity`, `occurred_at` (the
+producer's clock, UTC with `Z`) and `correlation_id`. An observation that omits
+them is stored, identified and fingerprinted exactly as before, and reads back
+without them. The `blackboxd` service ([service](service.md)) is built on this
+API.
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
@@ -110,8 +116,12 @@ transition explicitly. Missing/unopenable database files raise `DatabaseError`;
 ## Inputs, stored records and views
 
 Inputs are mappings, not result objects. Capture accepts `request_id`, `producer`,
-and optional lists `observations`, `claims`, `artifacts`. See the unchanged
+and optional lists `observations`, `claims`, `artifacts`. See the
 [capture schema](../schemas/capture.schema.json) for limits and required fields.
+An observation has `source`, `kind`, `name` and optional `exit_code`,
+`duration_ms`, `content_digest`, `outcome` (`success`, `failure`, `error`,
+`cancelled`, `unknown`), `severity` (`debug` … `critical`), `occurred_at` and
+`correlation_id`. `CallerObservation` carries the same fields.
 Each claim mapping contains `source`, `topic`, `statement`. Public operations
 validate before writing and reject unknown fields and sensitive-shaped content.
 The existing internal Pydantic input models (`Capture`, `Claim`, `Observation`,

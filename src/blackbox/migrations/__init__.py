@@ -6,9 +6,9 @@ from contextlib import closing
 
 from .._signals import EvidenceIssue, SchemaIssue
 from ..models import canonical
-from . import v001, v002, v003, v004
+from . import v001, v002, v003, v004, v005
 
-VERSIONS = (v001, v002, v003, v004)
+VERSIONS = (v001, v002, v003, v004, v005)
 DEFINITIONS = {module.VERSION: module.DDL for module in VERSIONS}
 # UPGRADES[n] moves a version n database to version n + 1.
 UPGRADES = {module.VERSION - 1: module.upgrade for module in VERSIONS[1:]}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly BlackBox database backup
+
+[Timer]
+OnCalendar=*-*-* 01:17:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

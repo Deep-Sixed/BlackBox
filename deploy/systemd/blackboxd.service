@@ -1,0 +1,75 @@
+# BlackBox operational event recorder. Install to /etc/systemd/system/.
+# See docs/service.md for accounts, groups, configuration and verification.
+[Unit]
+Description=BlackBox operational event recorder (blackboxd)
+Documentation=https://github.com/Deep-Sixed/BlackBox/blob/main/docs/service.md
+After=local-fs.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=blackbox-svc
+Group=blackbox-svc
+# Lets the daemon give its socket to the client group; grants nothing else.
+SupplementaryGroups=blackbox-clients
+ExecStart=/opt/blackbox/current/bin/blackboxd \
+    --database /var/lib/blackbox/db/blackbox.sqlite3 \
+    --socket /run/blackbox/blackbox.sock \
+    --principals /etc/blackbox/principals.toml \
+    --socket-group blackbox-clients
+# Re-read principals (token rotation/revocation); an invalid file is rejected
+# and the running set is kept.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+UMask=0077
+
+StateDirectory=blackbox
+StateDirectoryMode=0700
+# The socket (0660, group blackbox-clients) is the gate; the directory only
+# needs to be traversable.
+RuntimeDirectory=blackbox
+RuntimeDirectoryMode=0755
+ReadOnlyPaths=/etc/blackbox
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+# Git observation is off while /etc/blackbox/repositories.toml is absent or
+# empty. To allowlist repositories: add --repositories, use
+# ProtectHome=read-only, and relax RestrictNamespaces for bubblewrap
+# (RestrictNamespaces=user mnt net pid ipc).
+ProtectHome=yes
+RestrictNamespaces=yes
+PrivateTmp=yes
+PrivateDevices=yes
+# Filesystem Unix sockets keep working inside a private network namespace.
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# Re-allow only the chown family: blackboxd hands its socket to the client group
+# with chown(). Without this the kernel kills it with SIGSYS at startup (found in
+# Phase 4 staging on Friday). Everything else in @privileged stays denied.
+SystemCallFilter=@chown
+
+[Install]
+WantedBy=multi-user.target
