@@ -5,13 +5,46 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 Text = Annotated[str, Field(min_length=1, max_length=2048)]
+# UTC instant with an explicit Z and at most microsecond precision.
+UtcTimestamp = Annotated[
+    str,
+    Field(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$"),
+]
+OUTCOMES = ("success", "failure", "error", "cancelled", "unknown")
+SEVERITIES = ("debug", "info", "notice", "warning", "error", "critical")
+# Optional operational-event fields added in 0.8.0. They are serialized only when
+# set, so an observation without them has exactly its pre-0.8.0 canonical form,
+# identity and request fingerprint.
+EVENT_FIELDS = ("outcome", "severity", "occurred_at", "correlation_id")
+
+
+def parse_utc(value: str) -> datetime:
+    """Parse a validated `UtcTimestamp`; raise ValueError for impossible dates."""
+    return datetime.fromisoformat(value)
+
+
+def omit_unset_event_fields(data: dict) -> dict:
+    for name in EVENT_FIELDS:
+        if data.get(name, ...) is None:
+            del data[name]
+    return data
+
+
 # A full Git commit object ID (SHA-1 or SHA-256): no abbreviations, refs or options.
 FULL_COMMIT_ID = r"[a-f0-9]{40}|[a-f0-9]{64}"
 # Newer-to-older relations a claim may assert on an existing claim.
@@ -93,6 +126,22 @@ class Observation(StrictModel):
     exit_code: int | None = None
     duration_ms: Annotated[int, Field(ge=0)] | None = None
     content_digest: Digest | None = None
+    outcome: Literal[OUTCOMES] | None = None
+    severity: Literal[SEVERITIES] | None = None
+    # The producer's clock; BlackBox's own recording time is kept separately.
+    occurred_at: UtcTimestamp | None = None
+    correlation_id: Identifier | None = None
+
+    @field_validator("occurred_at")
+    @classmethod
+    def real_instant(cls, value):
+        if value is not None:
+            parse_utc(value)
+        return value
+
+    @model_serializer(mode="wrap")
+    def _event_fields_only_when_set(self, handler):
+        return omit_unset_event_fields(handler(self))
 
 
 class Claim(StrictModel):

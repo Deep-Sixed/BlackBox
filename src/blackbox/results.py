@@ -2,7 +2,9 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_serializer
+
+from .models import omit_unset_event_fields
 
 
 class _Result(BaseModel):
@@ -46,6 +48,16 @@ class CallerObservation(_Result):
     exit_code: int | None
     duration_ms: int | None
     content_digest: str | None
+    # Optional event fields (0.8.0). Records that never had them read back
+    # without them, exactly as stored.
+    outcome: str | None = None
+    severity: str | None = None
+    occurred_at: str | None = None
+    correlation_id: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _event_fields_only_when_set(self, handler):
+        return omit_unset_event_fields(handler(self))
 
 
 class GitObservation(_Result):

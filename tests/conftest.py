@@ -14,6 +14,7 @@ RELEASES = {
     1: ("v0.1.0", "9779108188cadff87d2ff9ee321b491d8ec16b68"),
     2: ("v0.3.0", "b2377d1214da2ac4c1df387b4ae2c7cd3e3aeebd"),
     3: ("v0.4.0", "dc503f597bc581aa4372091f6269543eaa251ea8"),
+    4: ("v0.6.8", "0f61fa9bd73718cebd9ca8817b9681adfc024f0a"),
 }
 
 
@@ -119,6 +120,11 @@ def released_v3(tmp_path_factory):
     return release_fixture(tmp_path_factory, *RELEASES[3])
 
 
+@pytest.fixture(scope="session")
+def released_v4(tmp_path_factory):
+    return release_fixture(tmp_path_factory, *RELEASES[4])
+
+
 @pytest.fixture
 def v1_database(released_v1, tmp_path):
     return copy_database(released_v1, tmp_path, "v1.sqlite3")
@@ -132,3 +138,8 @@ def v2_database(released_v2, tmp_path):
 @pytest.fixture
 def v3_database(released_v3, tmp_path):
     return copy_database(released_v3, tmp_path, "v3.sqlite3")
+
+
+@pytest.fixture
+def v4_database(released_v4, tmp_path):
+    return copy_database(released_v4, tmp_path, "v4.sqlite3")
