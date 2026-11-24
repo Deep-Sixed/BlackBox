@@ -152,7 +152,14 @@ writes the reason to stderr and to syslog (`blackbox-hook`).
      `check --anchor`.
 
   Events recorded after the copy are lost. The anchor log shows how far the
-  chain had advanced.
+  chain had advanced: `check --anchor` against a newer anchor reports
+  `anchor_missing`.
+
+  To verify a copy as another user (for example after a restic restore),
+  first place it in a **private** directory, such as a new 0700 directory
+  under `~jarvis`. BlackBox refuses to open a database below a directory that
+  other users can write, and the CLI then reports `database_unavailable`. On
+  Friday, `~jarvis/.cache` is 0777, so it does not qualify.
 
 ## Monitoring
 

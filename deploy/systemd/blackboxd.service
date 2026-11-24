@@ -66,6 +66,10 @@ RemoveIPC=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
+# Re-allow only the chown family: blackboxd hands its socket to the client group
+# with chown(). Without this the kernel kills it with SIGSYS at startup (found in
+# Phase 4 staging on Friday). Everything else in @privileged stays denied.
+SystemCallFilter=@chown
 
 [Install]
 WantedBy=multi-user.target

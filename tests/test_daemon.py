@@ -419,3 +419,17 @@ def test_openapi_documents_every_route():
     spec = (Path(__file__).parents[1] / "docs/openapi.yaml").read_text()
     for route in (*daemon_module.ROUTES, "/api/v1/events"):
         assert f"  {route}:" in spec, route
+
+
+def test_unit_template_allows_the_chown_the_daemon_performs():
+    """blackboxd chowns its socket to the client group; a seccomp filter that
+    denies @privileged must re-allow @chown or the kernel kills the daemon."""
+    unit = (Path(__file__).parents[1] / "deploy/systemd/blackboxd.service").read_text()
+    filters = [
+        line for line in unit.splitlines() if line.startswith("SystemCallFilter=")
+    ]
+    denied = any("~" in f and "@privileged" in f for f in filters)
+    assert not denied or "SystemCallFilter=@chown" in filters
+    assert "--socket-group" in unit and "os.chown" in (
+        Path(daemon_module.__file__).read_text()
+    )
