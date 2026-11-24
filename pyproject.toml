@@ -9,10 +9,11 @@ classifiers = [
     "Operating System :: POSIX",
     "Programming Language :: Python :: 3.14",
 ]
-dependencies = ["pydantic>=2.13,<3"]
+dependencies = ["pydantic>=2.13,<3", "h11>=0.16,<0.17"]
 
 [project.scripts]
 blackbox = "blackbox.cli:main"
+blackboxd = "blackbox.service.daemon:main"
 
 [dependency-groups]
 dev = ["pytest>=9,<10", "ruff>=0.15,<1", "jsonschema>=4.26,<5"]
