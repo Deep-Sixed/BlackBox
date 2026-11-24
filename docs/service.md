@@ -158,8 +158,8 @@ writes the reason to stderr and to syslog (`blackbox-hook`).
   To verify a copy as another user (for example after a restic restore),
   first place it in a **private** directory, such as a new 0700 directory
   under `~jarvis`. BlackBox refuses to open a database below a directory that
-  other users can write, and the CLI then reports `database_unavailable`. On
-  Friday, `~jarvis/.cache` is 0777, so it does not qualify.
+  other users can write, and the CLI then reports `database_unavailable`. Check
+  every parent directory: a shared cache directory, for example, does not qualify.
 
 ## Monitoring
 

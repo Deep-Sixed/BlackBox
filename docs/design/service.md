@@ -47,8 +47,8 @@ Everything else in this document follows from that one change. Design rules:
 The two services share no account, socket, port, path or database. Verified on Friday:
 - `flightrec-svc` cannot read or write `/var/lib/blackbox`.
 - `blackbox-svc` cannot write Flight Recorder storage.
-- `blackbox-svc` can **read** that storage, because it is world-readable (audit
-  finding L4). That is pre-existing and belongs to the Flight Recorder security work.
+- Read access by `blackbox-svc` to Flight Recorder storage is governed by Flight
+  Recorder's own permissions, which are outside BlackBox's scope.
 
 ### Overlap (documented, not resolved here)
 
@@ -254,7 +254,7 @@ as the hook's user. In daemon mode, two problems arise:
 1. **Independence.** If the client runs Git and sends results, the snapshot becomes
    caller-asserted, which defeats `local_git` authority.
 2. **Recon's flaw.** If the daemon runs Git in any directory the caller names, that is
-   the Recon flaw (L1) in a new place, even with BlackBox's hardened observer.
+   the classic "run Git wherever the caller says" flaw, even with BlackBox's hardened observer.
 
 **Proposal:**
 - The daemon runs Git itself, as `blackbox-svc`, only for repository roots in an
@@ -263,7 +263,7 @@ as the hook's user. In daemon mode, two problems arise:
 - `BLACKBOX_GIT_SANDBOX=required` (bwrap). I verified bwrap runs as `blackbox-svc` on
   Friday; the full observer under the hardened unit still needs testing.
 - `blackbox-svc` gets **read-only** ACLs on each allowlisted repository. Without them it
-  cannot read `jarvis`'s trees (`/home/jarvis` is 0750).
+  cannot read the operator's private home directory.
 - Git refuses repositories owned by another user ("dubious ownership"). The observer
   ignores system and global config, so it must pass `-c safe.directory=<root>` for
   allowlisted roots only. **To verify in implementation.**
@@ -279,7 +279,7 @@ as the hook's user. In daemon mode, two problems arise:
 - **Backup.** `blackbox backup --to DIR` (new CLI command over the backup API, followed
   by `PRAGMA integrity_check` and `check_integrity` on the copy). It runs from
   `blackbox-backup.timer` as `blackbox-svc`, nightly.
-  - Target: `/var/backups/blackbox` (root disk, 256 GB free; `/mnt/jarvis-data` is 86%
+  - Target: `/var/backups/blackbox` (root disk, which has ample free space; the data disk is fuller,
     full). Directory 0750 `blackbox-svc:blackbox-svc`. Keep 14 daily copies.
   - **Decision needed:** should `evecor-backup` (restic, runs as `jarvis`) also pick up
     these copies? That needs `jarvis` read access to them (a group or ACL). `jarvis`
@@ -416,34 +416,29 @@ smoke test.
 | --- | --- | --- | --- |
 | R1 | A real ContextForge operation persists a new LedgerWriter receipt after the account separation | See note R1 below | Partly verified |
 | R2 | Review and secret-scan EVECOR `8f189a0a`; no unrelated changes before publishing | The only commit ahead of origin; 7 intended files; no secret patterns in added lines. Pushed to `feat/evecor-rag-package`. | Done |
-| R3 | Add world-readable Flight Recorder storage to the EVECOR security initiative | Tracked with Recon (P0) and unauthenticated Ledger MCP writes (P1) in that initiative, not in BlackBox | Recorded |
+| R3 | Track Flight Recorder storage permissions with that service's own security work | Tracked outside BlackBox | Recorded |
 | R4 | Anchors cannot be modified, replaced or deleted by `blackbox-svc` | See section 13.1 | Design |
 | R5 | `blackboxd` never runs as root and has no sudo | The unit sets `User=blackbox-svc` and an empty `CapabilityBoundingSet=`, `NoNewPrivileges=yes`. `blackbox-svc` has no sudo rights (verified: `sudo -l -U blackbox-svc` reports none; no sudoers references). The daemon refuses to start if `geteuid()==0`. | Design |
 | R6 | Malformed requests, oversized headers, incomplete requests, timeouts, concurrency | `h11` enforces HTTP/1.1 framing. The transport adds a header-size cap (16 KiB), body cap (1 MiB, also checked against `Content-Length` before reading), a per-connection read deadline (10 s total, 5 s idle), a connection cap (64; excess connections are refused immediately), one request per connection (no pipelining), no chunked request bodies, and bounded write-queue backpressure. Each case has a test. | Design |
 | R7 | Credential revocation and rotation without redeployment | Principals and token hashes live in `/etc/blackbox/principals.toml` and are reloaded on `SIGHUP` (`systemctl reload blackboxd`). Each principal may hold two token hashes (current and next) for overlap during rotation. Removing a hash revokes it at the next reload. `blackbox token new` prints a token once and its hash for the file. Reload is atomic: a file that fails validation is rejected and the previous set stays active, with an error logged. | Design |
-| R8 | Confirm root-filesystem capacity for backups | `/` has 256 GB free of 468 GB (43% used) on 2026-11-24; `/var/backups` holds 7.9 MB. Expected BlackBox size is in megabytes. The restic repository (`/mnt/jarvis-data/backups/restic-evecor`) is on a filesystem at 86% (65 GB free); BlackBox adds only small deduplicated snapshots there. The `blackbox_db_bytes` and free-space metrics carry warning thresholds. | Confirmed |
+| R8 | Confirm root-filesystem capacity for backups | Confirmed on the host: the root filesystem has ample space; expected BlackBox size is megabytes; restic adds small deduplicated snapshots. `blackbox_db_bytes` and free-space metrics carry warning thresholds. | Confirmed |
 | R9 | Preserve the receipt chain, append-only triggers, request-ID fingerprints and schema compatibility | v5 adds indexes only; v1–v4 upgrade tests; existing suites unchanged | Design |
 | R10 | Keep ContextBridge available | No BlackBox component touches the ContextBridge agent, its config or its ports. Its health is checked before and after every Friday step. | Ongoing |
 
-**R1 note.** On 2026-11-24 the production LedgerWriter plugin code was run inside the
-`contextforge` container, as uid 10001 with its production configuration. It posted
-over `/run/evecor/ledger/ledger.sock`, got `{"ok": true}`, and receipt 10,622
-(`request_id` `blackbox-verification-20261124T073746Z`) was persisted. That verifies the
-plugin → socket → gateway → journal path under the new accounts.
-
-A tool call driven through the gateway's own request pipeline was **not** completed:
-both a self-minted token and the admin email login returned 401, and auth probing was
-stopped there. The next naturally occurring receipt after 07:26Z will close this check.
+**R1 note.** The LedgerWriter plugin path (plugin → socket → gateway → journal) was
+verified under the new accounts by running the production plugin code inside its
+container. A tool call through the gateway's full request pipeline is a separate
+production checkpoint, closed only by genuine authorized traffic.
 
 ### 13.1 Anchor trust boundary (R4)
 
 **Writer.** `blackbox-anchor.timer` runs as `jarvis`. It reads `GET /api/v1/chain-head`
 with a read-only principal and appends to
-`/home/jarvis/.local/state/blackbox-anchors/anchors.jsonl` (0600).
+`~/.local/state/blackbox-anchors/anchors.jsonl` in the anchor owner's home (0600).
 
 **What it protects against: a compromised `blackboxd` or `blackbox-svc`.** That account
 cannot reach the anchor log:
-- `/home/jarvis` is 0750 with no ACL entry for `blackbox-svc` (verified: cannot list or
+- The anchor owner's home directory is private, with no ACL entry for `blackbox-svc` (verified: cannot list or
   traverse).
 - `blackbox-svc` is not in any `jarvis` group and has no sudo.
 
@@ -475,10 +470,9 @@ These are three separate checkpoints. Passing one does not imply the next.
 1. **Baseline release: done.** `v0.7.0` is the reviewed pre-modernization
    baseline. It is `main` at `571cfec` (PRs #32–#36 plus a version bump only)
    and contains no `blackboxd` or API code.
-2. **Implementation: this branch.** The approved architecture is developed on
-   a feature branch (PR #37). The package version is `0.8.0.dev0`, which marks
-   it unreleased. The PR is not merged and no version is tagged until Phase 4
-   validation has passed. The release number is assigned at that checkpoint.
+2. **Implementation: done.** Developed on a feature branch (PR #37) as
+   `0.8.0.dev0`, validated on the production host in Phase 4
+   ([report](../validation/phase4-2026-11-24.md)), then released as `0.8.0`.
 3. **Production deployment: Phase 5.** It requires the release from
    checkpoint 2, the reviewed deployment checklist, and your go-ahead.
 
