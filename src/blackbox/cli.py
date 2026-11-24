@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import syslog
 from pathlib import Path
 
 from .api import (
@@ -18,14 +19,24 @@ from .api import (
 from .api import (
     capture as capture_session,
 )
+from .backup import backup as backup_database
+from .client import Client, ClientError, read_token
 from .errors import BlackBoxError, IntegrityError, SchemaError, ValidationError
 from .hooks import digest_only_requests, hook_requests, load_hook_key, read_payload
 from .models import CLAIM_RELATIONS
+from .service.auth import new_token
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="blackbox")
-    parser.add_argument("--database", type=Path, required=True)
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--database", type=Path)
+    target.add_argument(
+        "--socket", type=Path, help="talk to blackboxd instead of opening a database"
+    )
+    parser.add_argument(
+        "--token-file", type=Path, help="private file holding the blackboxd token"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init")
     capture = commands.add_parser("capture")
@@ -50,6 +61,11 @@ def main() -> int:
     hook = commands.add_parser("hook")
     hook.add_argument("--producer", default="claude-code")
     hook.add_argument("--git", action="store_true")
+    backup = commands.add_parser("backup")
+    backup.add_argument("--to", type=Path, required=True)
+    backup.add_argument("--keep", type=int, default=14)
+    token = commands.add_parser("token")
+    token.add_argument("action", choices=["new"])
     try:
         args = parser.parse_args()
     except SystemExit as error:
@@ -57,6 +73,18 @@ def main() -> int:
         if error.code == 2 and "hook" in sys.argv[1:]:
             raise SystemExit(1) from None
         raise
+    if args.command == "token":
+        token, token_hash = new_token()
+        print(json.dumps({"token": token, "sha256": token_hash}, sort_keys=True))
+        return 0
+    if args.socket is not None:
+        if args.command not in SOCKET_COMMANDS:
+            print('{"error":"command_requires_database","retryable":false}')
+            return 1
+        return run_socket_hook(args) if args.command == "hook" else run_socket(args)
+    if args.database is None:
+        print('{"error":"database_or_socket_required","retryable":false}')
+        return 1
     if args.command == "hook":
         return run_hook(args)
     try:
@@ -99,12 +127,10 @@ def main() -> int:
                 }
             case "head":
                 result = get_chain_head(args.database).model_dump(mode="json")
+            case "backup":
+                result = backup_database(args.database, args.to, keep=args.keep)
             case "check":
-                anchor = (
-                    json.loads(args.anchor.read_text())
-                    if args.anchor is not None
-                    else None
-                )
+                anchor = read_anchor(args.anchor) if args.anchor is not None else None
                 result = check_integrity(args.database, anchor=anchor).model_dump(
                     mode="json"
                 )
@@ -135,6 +161,94 @@ def main() -> int:
         # RecursionError: input JSON nested deeper than the parser can follow.
         print('{"error":"input_unavailable_or_invalid","retryable":false}')
         return 1
+
+
+SOCKET_COMMANDS = ("hook", "head", "check")
+
+
+def read_anchor(path: Path) -> dict:
+    """A chain head as JSON, or the last line of an anchor log (JSON lines)."""
+    text = path.read_text()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            raise
+        return json.loads(lines[-1])
+
+
+def run_socket(args) -> int:
+    try:
+        client = Client(args.socket, read_token(args.token_file))
+        if args.command == "head":
+            print(
+                json.dumps(client.request("GET", "/api/v1/chain-head"), sort_keys=True)
+            )
+            return 0
+        query = None
+        if args.anchor is not None:
+            anchor = read_anchor(args.anchor)
+            query = {"sequence": anchor["sequence"], "digest": anchor["digest"]}
+        result = client.request("GET", "/api/v1/integrity", query=query)
+        print(json.dumps(result, sort_keys=True))
+        return 0 if result.get("ok") else 1
+    except ClientError as error:
+        print(json.dumps({"error": error.code, "retryable": True}, sort_keys=True))
+        return 1
+    except json.JSONDecodeError, KeyError, TypeError, UnicodeError, OSError:
+        print('{"error":"input_unavailable_or_invalid","retryable":false}')
+        return 1
+
+
+def _warn(code: str) -> None:
+    """Never silent: hosts may discard stderr, so failures also go to syslog."""
+    print(json.dumps({"error": code}, sort_keys=True), file=sys.stderr)
+    try:
+        syslog.openlog("blackbox-hook", 0, syslog.LOG_USER)
+        syslog.syslog(syslog.LOG_WARNING, f"host event not recorded: {code}")
+    except OSError:
+        pass
+
+
+def run_socket_hook(args) -> int:
+    """Send one host hook event to blackboxd. Never exits 2 (that would block).
+
+    The payload is digested here with the local hook key; only names and the
+    digest leave this process. The daemon decides whether a Git snapshot of the
+    working directory is allowed.
+    """
+    try:
+        key = load_hook_key()
+        raw, content_digest = read_payload(sys.stdin.buffer, key)
+        reason = "oversized" if raw is None else None
+        if reason is None:
+            try:
+                event, git, repo = hook_requests(
+                    raw,
+                    producer=args.producer,
+                    content_digest=content_digest,
+                    git=args.git,
+                )
+            except ValueError, TypeError, RecursionError:
+                reason = "unreadable"
+        if reason is not None:
+            event, git, repo = digest_only_requests(
+                reason, content_digest, producer=args.producer, git=args.git
+            )
+        body = {"capture": event}
+        if git is not None and repo is not None:
+            body["git_cwd"] = str(repo)
+        Client(args.socket, read_token(args.token_file), timeout=2.0).request(
+            "POST", "/api/v1/host-reports", body
+        )
+    except ClientError as error:
+        _warn(error.code)
+        return 1
+    except OSError:
+        _warn("input_unavailable_or_invalid")
+        return 1
+    return 0
 
 
 def run_hook(args) -> int:
