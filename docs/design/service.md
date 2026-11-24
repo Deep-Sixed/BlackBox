@@ -281,16 +281,16 @@ as the hook's user. In daemon mode, two problems arise:
   `blackbox-backup.timer` as `blackbox-svc`, nightly.
   - Target: `/var/backups/blackbox` (root disk, which has ample free space; the data disk is fuller,
     full). Directory 0750 `blackbox-svc:blackbox-svc`. Keep 14 daily copies.
-  - **Decision needed:** should `evecor-backup` (restic, runs as `jarvis`) also pick up
-    these copies? That needs `jarvis` read access to them (a group or ACL). `jarvis`
-    has sudo, so this does not lower confidentiality in practice.
+  - **Decided (D7):** `evecor-backup` (restic, runs as `jarvis`) picks up these copies.
+    `jarvis` reads them through an ACL on the setgid directory (`blackbox-backup` group,
+    2750, copies 0640). `jarvis` has sudo, so this does not lower confidentiality in practice.
 - **External anchors.** The writer must not be able to rewrite its own anchors.
   `blackbox-anchor.timer` runs as **`jarvis`**, reads `GET /api/v1/chain-head` with a
   read-only principal, and appends the head to
-  `~/.local/state/blackbox-anchors/anchors.jsonl`. `check --anchor` and
-  `GET /api/v1/integrity?anchor=` verify against it. `evecor-backup` currently targets
-  only the Flight Recorder and Dreaming stores (verified). Adding the anchor log and the
-  hook key to it is a small EVECOR change that needs approval.
+  `/var/lib/blackbox-anchors/anchors.jsonl` (owned by `jarvis`, 0700/0600). `check --anchor` and
+  `GET /api/v1/integrity?anchor=` verify against it. Since Phase 5, `evecor-backup` also
+  takes the backup copies and the anchor log, with a restore spot-check (`blackbox check`
+  on the restored copy). The hook key is not included because no hooks are enabled yet.
 - **Restore.** Stop the daemon, verify the backup copy (`integrity_check` plus
   `check --anchor` against the newest anchor at or below the copy's head), atomically
   replace the database file, start the daemon. Events recorded after the backup are
@@ -360,7 +360,8 @@ chain verification.
   - `Restart=on-failure`, `RestartSec=2`, start-limit burst, `TimeoutStopSec=15`
     (drain the queue, checkpoint).
 - **Timers:** `blackbox-backup.timer` (system, `blackbox-svc`) and
-  `blackbox-anchor.timer` (`jarvis` user unit).
+  `blackbox-anchor.timer` (system unit, `User=jarvis`; a user unit cannot pick up
+  group memberships granted after its user manager started).
 - **CLI client mode:** `blackbox --socket /run/blackbox/blackbox.sock ...` for
   `hook`, `head` and `check`. `--database` stays for local and development use.
 - **Collision checks done:** `/run/blackbox`, `/var/backups/blackbox`, groups
@@ -434,7 +435,7 @@ production checkpoint, closed only by genuine authorized traffic.
 
 **Writer.** `blackbox-anchor.timer` runs as `jarvis`. It reads `GET /api/v1/chain-head`
 with a read-only principal and appends to
-`~/.local/state/blackbox-anchors/anchors.jsonl` in the anchor owner's home (0600).
+`/var/lib/blackbox-anchors/anchors.jsonl`, owned by the anchor owner (0700 directory, 0600 file).
 
 **What it protects against: a compromised `blackboxd` or `blackbox-svc`.** That account
 cannot reach the anchor log:
@@ -473,8 +474,9 @@ These are three separate checkpoints. Passing one does not imply the next.
 2. **Implementation: done.** Developed on a feature branch (PR #37) as
    `0.8.0.dev0`, validated on the production host in Phase 4
    ([report](../validation/phase4-2026-11-24.md)), then released as `0.8.0`.
-3. **Production deployment: Phase 5.** It requires the release from
-   checkpoint 2, the reviewed deployment checklist, and your go-ahead.
+3. **Production deployment: done.** `0.8.0` deployed as an independent service in
+   Phase 5 and verified ([report](../validation/phase5-2026-11-24.md)). No
+   producer is enabled. Each one needs separate approval.
 
 **Passing CI does not make BlackBox production-ready.** Readiness also requires
 these results from isolated integration on Friday (Phase 4):
