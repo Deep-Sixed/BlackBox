@@ -1,4 +1,4 @@
-# Supported public API — BlackBox 0.6.9
+# Supported public API — BlackBox 0.7.0
 
 Use `import blackbox` (or named imports from `blackbox`). Its explicit `__all__`
 is the supported namespace, including result models, errors and `__version__`.
@@ -46,6 +46,11 @@ Package 0.6.9 keeps schema v4; a branch name that is not valid UTF-8 is recorded
 (undecodable bytes as U+DC80–U+DCFF, as for paths) instead of failing the Git
 snapshot, and switching HEAD to another ref at the same commit while a snapshot
 is taken now fails it, like a commit change (below).
+Package 0.7.0 keeps schema v4 and releases the changes made after 0.6.9: hook
+payload digests are keyed with an external HMAC key ([hooks](hooks.md#hook-hmac-key)),
+`BLACKBOX_GIT_SANDBOX=required` runs the Git observer under bubblewrap and fails
+closed, Git observation runs before the SQLite writer lock is taken, and identical
+observations in one capture are kept as separate records.
 Historical tags and canonical persisted material are unchanged. Existing
 internal imports have not been removed, but receive no compatibility promise.
 Future public breaking changes require an explicit versioned contract change.
