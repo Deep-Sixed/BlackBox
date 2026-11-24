@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 import syslog
 from pathlib import Path
@@ -52,7 +53,10 @@ def main() -> int:
             command.add_argument("--topic")
     check = commands.add_parser("check")
     check.add_argument("--anchor", type=Path)
-    commands.add_parser("head")
+    head = commands.add_parser("head")
+    head.add_argument(
+        "--append", type=Path, help="append the head as one JSON line (anchor log)"
+    )
     claim = commands.add_parser("claim")
     claim.add_argument("session")
     claim.add_argument("--input", type=Path, required=True)
@@ -64,6 +68,7 @@ def main() -> int:
     backup = commands.add_parser("backup")
     backup.add_argument("--to", type=Path, required=True)
     backup.add_argument("--keep", type=int, default=14)
+    backup.add_argument("--group-readable", action="store_true")
     token = commands.add_parser("token")
     token.add_argument("action", choices=["new"])
     try:
@@ -127,8 +132,15 @@ def main() -> int:
                 }
             case "head":
                 result = get_chain_head(args.database).model_dump(mode="json")
+                if args.append is not None:
+                    append_anchor(args.append, result)
             case "backup":
-                result = backup_database(args.database, args.to, keep=args.keep)
+                result = backup_database(
+                    args.database,
+                    args.to,
+                    keep=args.keep,
+                    group_readable=args.group_readable,
+                )
             case "check":
                 anchor = read_anchor(args.anchor) if args.anchor is not None else None
                 result = check_integrity(args.database, anchor=anchor).model_dump(
@@ -166,6 +178,19 @@ def main() -> int:
 SOCKET_COMMANDS = ("hook", "head", "check")
 
 
+def append_anchor(path: Path, head: dict) -> None:
+    """Append one anchor line durably; the log is private to its owner."""
+    line = (json.dumps(head, sort_keys=True) + "\n").encode()
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    try:
+        if os.fstat(fd).st_mode & 0o077:
+            raise OSError("anchor log must be private")
+        os.write(fd, line)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def read_anchor(path: Path) -> dict:
     """A chain head as JSON, or the last line of an anchor log (JSON lines)."""
     text = path.read_text()
@@ -182,9 +207,10 @@ def run_socket(args) -> int:
     try:
         client = Client(args.socket, read_token(args.token_file))
         if args.command == "head":
-            print(
-                json.dumps(client.request("GET", "/api/v1/chain-head"), sort_keys=True)
-            )
+            head = client.request("GET", "/api/v1/chain-head")
+            if args.append is not None:
+                append_anchor(args.append, head)
+            print(json.dumps(head, sort_keys=True))
             return 0
         query = None
         if args.anchor is not None:

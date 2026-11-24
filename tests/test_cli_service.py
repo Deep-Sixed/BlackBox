@@ -211,3 +211,43 @@ def test_failed_verification_leaves_no_copy(tmp_path, monkeypatch):
     with pytest.raises(bb.IntegrityError):
         backup.backup(database, target)
     assert list(target.iterdir()) == []
+
+
+def test_group_readable_backups_for_a_separate_reader(tmp_path):
+    database = seeded(tmp_path)
+    target = tmp_path / "backups"
+    target.mkdir()
+    target.chmod(0o2750)
+    info = backup.backup(database, target, group_readable=True)
+    assert os.stat(info["path"]).st_mode & 0o777 == 0o640
+    assert database.stat().st_mode & 0o777 == 0o600
+
+
+def test_head_append_writes_only_successful_heads(daemon, tmp_path):
+    token = tmp_path / "forge.token"
+    log = tmp_path / "anchors.jsonl"
+    for _ in range(2):
+        cli(
+            "--socket",
+            daemon.socket,
+            "--token-file",
+            token,
+            "head",
+            "--append",
+            log,
+            check=True,
+        )
+    failed = cli(
+        "--socket",
+        tmp_path / "gone.sock",
+        "--token-file",
+        token,
+        "head",
+        "--append",
+        log,
+    )
+    assert failed.returncode == 1
+    lines = log.read_text().splitlines()
+    assert len(lines) == 2
+    assert all(set(json.loads(x)) == {"sequence", "digest"} for x in lines)
+    assert log.stat().st_mode & 0o777 == 0o600

@@ -1,0 +1,7 @@
+# /etc/blackbox/repositories.toml — root:blackbox-svc, mode 0640.
+# Repository roots blackboxd may snapshot with its own Git observer when a host
+# report asks for it. Empty (or absent) means Git observation is off. Any
+# listed root forces BLACKBOX_GIT_SANDBOX=required: snapshots run under
+# bubblewrap or not at all. blackbox-svc also needs read access (ACL) to each
+# root, and the unit needs ProtectHome=read-only.
+roots = []

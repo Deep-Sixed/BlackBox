@@ -22,7 +22,19 @@ PREFIX = "blackbox-"
 SUFFIX = ".sqlite3"
 
 
-def backup(database: str | Path, directory: str | Path, *, keep: int = 14) -> dict:
+def backup(
+    database: str | Path,
+    directory: str | Path,
+    *,
+    keep: int = 14,
+    group_readable: bool = False,
+) -> dict:
+    """Write a verified copy into `directory`.
+
+    `group_readable` makes copies 0640 so a separate backup reader (the
+    directory's group, e.g. via a setgid directory) can pick them up; the live
+    database stays private to its owner either way.
+    """
     if not 1 <= keep <= 3650:
         raise ValueError("keep out of range")
     directory = Path(directory).absolute()
@@ -47,6 +59,8 @@ def backup(database: str | Path, directory: str | Path, *, keep: int = 14) -> di
         head = api.get_chain_head(partial)
         with open(partial, "rb") as handle:
             os.fsync(handle.fileno())
+        if group_readable:
+            os.chmod(partial, 0o640)
         os.replace(partial, final)
         _fsync_directory(directory)
     except BaseException:

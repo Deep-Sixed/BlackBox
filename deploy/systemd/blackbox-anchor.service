@@ -1,0 +1,19 @@
+# USER unit for an account other than blackbox-svc (on Friday: jarvis).
+# Install to ~/.config/systemd/user/. Appends the receipt-chain head to an
+# anchor log blackbox-svc cannot reach, so a rewrite of the database up to the
+# newest anchor is detectable (`blackbox check --anchor`). See the trust
+# boundary in docs/design/service.md section 13.1.
+[Unit]
+Description=Export the BlackBox receipt-chain head to the local anchor log
+
+[Service]
+Type=oneshot
+StateDirectory=blackbox-anchors
+StateDirectoryMode=0700
+UMask=0077
+# `head --append` writes one JSON line only after a successful read; a failure
+# exits non-zero and shows in the journal and the timer status.
+ExecStart=/opt/blackbox/current/bin/blackbox \
+    --socket /run/blackbox/blackbox.sock \
+    --token-file %h/.config/blackbox/anchor.token \
+    head --append ${STATE_DIRECTORY}/anchors.jsonl
