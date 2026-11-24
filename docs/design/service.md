@@ -1,6 +1,7 @@
-# BlackBox service design (v0.8 proposal)
+# BlackBox service design (v0.8)
 
-> **Status: proposal for review. Nothing here is implemented yet.**
+> **Status: approved 2026-11-24 with the decisions and requirements in sections 12–13.**
+> Implementation proceeds in the order of section 11.
 > Scope: the first production deployment of BlackBox on Friday, *alongside* Flight
 > Recorder. Replacing Flight Recorder, changing ADR-005, a Ledger-MCP or `/v1/record`
 > compatibility layer, and migrating historical data are explicitly out of scope.
@@ -394,17 +395,75 @@ smoke test.
    runbook.
 7. Full test suite and CI; draft PR.
 
-## 12. Decisions requested
+## 12. Decisions (approved 2026-11-24)
 
-| # | Decision | Recommendation |
+| # | Decision | Outcome |
 | --- | --- | --- |
-| D1 | HTTP stack | asyncio + `h11` |
-| D2 | Authentication | Token **and** peer-uid binding per principal |
-| D3 | New event fields (`outcome`, `severity`, `occurred_at`, `correlation_id`) | Approve |
-| D4 | Schema v5 (indexes only) | Approve; it can be postponed if you want no migration on Friday |
-| D5 | Free-form labels map | Defer |
-| D6 | Git observation in the daemon | Allowlist-only, sandbox required, empty on Friday |
-| D7 | Backup location and restic inclusion | `/var/backups/blackbox`; include in restic via read group |
-| D8 | Retention | Keep everything for Friday; sealed segments designed later |
-| D9 | MCP surface | Deferred (as you decided) |
-| D10 | Claims/evidence-link endpoints in API v1 | Defer; v1 covers events only |
+| D1 | HTTP stack | **Approved:** asyncio + `h11`. Pinned in `uv.lock`; included in dependency advisory scanning. |
+| D2 | Authentication | **Approved:** a valid scoped token **and** a matching `SO_PEERCRED` uid are both required. Neither alone authorizes anything. |
+| D3 | Event fields `outcome`, `severity`, `occurred_at`, `correlation_id` | **Approved:** optional. Rows without them keep identical hashes (tested). |
+| D4 | Schema v5 (indexes only) | **Approved now**, with migration, integrity, compatibility and query-performance tests. |
+| D5 | Free-form labels map | **Deferred.** |
+| D6 | Git observation | **Approved:** sandbox required (fails closed when unavailable), operator allowlist, empty in production. |
+| D7 | Backups in `evecor-backup` | **Approved** as a separate, narrowly scoped EVECOR change, using SQLite-consistent copies (never the live file). Verify permissions, capacity, retention and restore. |
+| D8 | Retention | **Approved:** keep everything initially; monitor growth; disk-space warning thresholds. |
+| D9 | MCP surface | **Deferred.** |
+| D10 | Claims/evidence-link endpoints | **Deferred.** |
+
+## 13. Approved requirements and how they are met
+
+| # | Requirement | Design response | Status |
+| --- | --- | --- | --- |
+| R1 | A real ContextForge operation persists a new LedgerWriter receipt after the account separation | See note R1 below | Partly verified |
+| R2 | Review and secret-scan EVECOR `8f189a0a`; no unrelated changes before publishing | The only commit ahead of origin; 7 intended files; no secret patterns in added lines. Pushed to `feat/evecor-rag-package`. | Done |
+| R3 | Add world-readable Flight Recorder storage to the EVECOR security initiative | Tracked with Recon (P0) and unauthenticated Ledger MCP writes (P1) in that initiative, not in BlackBox | Recorded |
+| R4 | Anchors cannot be modified, replaced or deleted by `blackbox-svc` | See section 13.1 | Design |
+| R5 | `blackboxd` never runs as root and has no sudo | The unit sets `User=blackbox-svc` and an empty `CapabilityBoundingSet=`, `NoNewPrivileges=yes`. `blackbox-svc` has no sudo rights (verified: `sudo -l -U blackbox-svc` reports none; no sudoers references). The daemon refuses to start if `geteuid()==0`. | Design |
+| R6 | Malformed requests, oversized headers, incomplete requests, timeouts, concurrency | `h11` enforces HTTP/1.1 framing. The transport adds a header-size cap (16 KiB), body cap (1 MiB, also checked against `Content-Length` before reading), a per-connection read deadline (10 s total, 5 s idle), a connection cap (64; excess connections are refused immediately), one request per connection (no pipelining), no chunked request bodies, and bounded write-queue backpressure. Each case has a test. | Design |
+| R7 | Credential revocation and rotation without redeployment | Principals and token hashes live in `/etc/blackbox/principals.toml` and are reloaded on `SIGHUP` (`systemctl reload blackboxd`). Each principal may hold two token hashes (current and next) for overlap during rotation. Removing a hash revokes it at the next reload. `blackbox token new` prints a token once and its hash for the file. Reload is atomic: a file that fails validation is rejected and the previous set stays active, with an error logged. | Design |
+| R8 | Confirm root-filesystem capacity for backups | `/` has 256 GB free of 468 GB (43% used) on 2026-11-24; `/var/backups` holds 7.9 MB. Expected BlackBox size is in megabytes. The restic repository (`/mnt/jarvis-data/backups/restic-evecor`) is on a filesystem at 86% (65 GB free); BlackBox adds only small deduplicated snapshots there. The `blackbox_db_bytes` and free-space metrics carry warning thresholds. | Confirmed |
+| R9 | Preserve the receipt chain, append-only triggers, request-ID fingerprints and schema compatibility | v5 adds indexes only; v1–v4 upgrade tests; existing suites unchanged | Design |
+| R10 | Keep ContextBridge available | No BlackBox component touches the ContextBridge agent, its config or its ports. Its health is checked before and after every Friday step. | Ongoing |
+
+**R1 note.** On 2026-11-24 the production LedgerWriter plugin code was run inside the
+`contextforge` container, as uid 10001 with its production configuration. It posted
+over `/run/evecor/ledger/ledger.sock`, got `{"ok": true}`, and receipt 10,622
+(`request_id` `blackbox-verification-20261124T073746Z`) was persisted. That verifies the
+plugin → socket → gateway → journal path under the new accounts.
+
+A tool call driven through the gateway's own request pipeline was **not** completed:
+both a self-minted token and the admin email login returned 401, and auth probing was
+stopped there. The next naturally occurring receipt after 07:26Z will close this check.
+
+### 13.1 Anchor trust boundary (R4)
+
+**Writer.** `blackbox-anchor.timer` runs as `jarvis`. It reads `GET /api/v1/chain-head`
+with a read-only principal and appends to
+`/home/jarvis/.local/state/blackbox-anchors/anchors.jsonl` (0600).
+
+**What it protects against: a compromised `blackboxd` or `blackbox-svc`.** That account
+cannot reach the anchor log:
+- `/home/jarvis` is 0750 with no ACL entry for `blackbox-svc` (verified: cannot list or
+  traverse).
+- `blackbox-svc` is not in any `jarvis` group and has no sudo.
+
+A history rewrite or truncation of the database up to the newest anchor is therefore
+detected by `check --anchor`.
+
+**What it does not protect against:**
+- **`jarvis` itself.** Claude Code and other agents run as `jarvis`, and `jarvis` has
+  sudo, so an agent can edit both the anchor log and, through sudo, the database. Local
+  anchors give **no** protection against the identity BlackBox most often observes.
+- **root.** Same reason.
+- **Events after the newest anchor.** Anchors run every 15 minutes, so the last window
+  is unprotected.
+
+**Hardening options** (not part of Friday; listed in order of strength):
+1. Off-host anchors, e.g. append to a repository or host `jarvis` cannot rewrite.
+2. `chattr +a` on the anchor log, set by root. It blocks truncation and rewrites by
+   `jarvis` without sudo, but not by sudo.
+3. Include the anchor log in restic. Old snapshots then hold earlier anchors, which
+   raises the cost of an undetected rewrite.
+
+**Plan for Friday:** option 3 (part of the D7 change). Options 1–2 go into the
+follow-up list.
