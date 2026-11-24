@@ -158,6 +158,24 @@ ordinary text.
 None of these change the mechanism. They harden where its assumptions are
 enforced.
 
+## Service boundary (blackboxd, 0.8.0)
+
+`blackboxd` moves the database behind a process boundary:
+- Only `blackbox-svc` can open the database file.
+- Callers authenticate with a scoped token **and** a matching kernel-reported
+  peer uid.
+- The unit has no capabilities and no network, and the daemon refuses to run
+  as root.
+- Transport limits bound header, body, time and connection use.
+
+This defends the store against other local accounts and compromised clients.
+It does not defend against root or sudo-capable accounts.
+
+Authentication establishes the *submitter*, not the truth of an event: API
+events remain `caller_asserted`. External anchors are written by a different
+account (`jarvis`). They detect a rewrite by a compromised `blackbox-svc`, but
+not one by `jarvis` or root. See [design/service.md §13.1](design/service.md).
+
 ## Required Git-observer sandbox
 
 On Linux, set `BLACKBOX_GIT_SANDBOX=required` to make every Git observer subprocess run under bubblewrap with the filesystem mounted read-only, a private temporary directory, and a new network namespace. The mode is fail-closed: if bubblewrap is unavailable or cannot start, observation fails instead of silently running unsandboxed. The default remains `off` for portable local-core compatibility.

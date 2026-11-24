@@ -13,10 +13,15 @@ The built-in Git observer independently collects local repository metadata.
 Caller-submitted observations remain assertions. Claims can be linked to evidence
 and corrected across sessions while preserving their sources and chronology.
 
-BlackBox currently provides a local Python API and CLI backed by SQLite.
-Network services, remote observer transports, and deployment integrations
-are outside the current core runtime. Tool/process execution observation is
-planned; the current runtime does not independently witness process execution.
+BlackBox provides a local Python API and CLI backed by SQLite, and since 0.8.0
+a local service, `blackboxd`. The service is the only process that opens the
+database. Authorized components submit and read operational events through a
+versioned HTTP API on a Unix socket. Every request needs a scoped token and a
+matching caller uid, and there is no network listener. See
+[docs/service.md](docs/service.md), [docs/openapi.yaml](docs/openapi.yaml) and
+the [service design](docs/design/service.md). Remote observer transports
+remain out of scope. Tool/process execution observation is planned; the
+current runtime does not independently witness process execution.
 
 ## Host lifecycle hooks
 
@@ -76,7 +81,7 @@ schema v3.
 
 ## Python integration
 
-BlackBox 0.7.0 exposes supported operations and typed results through `import
+BlackBox 0.8.0 exposes supported operations and typed results through `import
 blackbox`. Use `initialize`, `capture`, `append_claim`, `get_session`,
 `get_timeline`, `get_claims`, `link_evidence`, `get_evidence_links`,
 `get_claim_relations`, `check_integrity`, and `get_chain_head`. See the

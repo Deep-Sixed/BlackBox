@@ -109,6 +109,24 @@ either: any process running as the same user can pipe a payload into
 `blackbox hook`. Only the `--git` snapshot is BlackBox's own observation
 (`local_git`, `locally_observed`).
 
+## Through blackboxd (0.8.0)
+
+On a host running [`blackboxd`](service.md), give the hook the socket and a
+token file instead of a database:
+
+```json
+"command": "blackbox --socket /run/blackbox/blackbox.sock --token-file ~/.config/blackbox/hooks.token hook"
+```
+
+The payload is digested locally with the hook key, exactly as in database
+mode. Only the event and tool names and the digest reach the daemon. The
+daemon records the report with `host_reported` authority under the
+authenticated principal's name. `--git` asks the daemon for a snapshot of the
+working directory. The daemon takes it with its own Git observer, only for
+operator-allowlisted repositories and only under the bubblewrap sandbox; the
+directory is never trusted because the caller named it. If delivery fails,
+the hook exits 1 and logs the reason to stderr and syslog (`blackbox-hook`).
+
 ## Never blocks
 
 BlackBox records and never governs. Hook hosts treat exit code 2 as "block this

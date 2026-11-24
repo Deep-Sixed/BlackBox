@@ -117,8 +117,8 @@ lock for the backfill. No external observer authentication is introduced.
 
 ## Python consumer boundary
 
-Package 0.7.0 uses schema v4 (introduced by 0.6.0). Public reader operations raise
-`MigrationRequiredError` for v1/v2/v3; `initialize` and capture/claim/link
+Package 0.8.0 uses schema v5. Public reader operations raise
+`MigrationRequiredError` for v1/v2/v3/v4; `initialize` and capture/claim/link
 writer operations may migrate. `check_integrity` returns typed findings when
 inspection succeeds and raises bounded errors when the database cannot be opened
 or validated.
@@ -149,3 +149,28 @@ checks. A failure rolls back the definition with the rest of the migration.
 
 Released v3 code refuses a v4 store as an unsupported schema; there is no
 downgrade.
+
+## Schema v5: query indexes
+
+Schema v5 (package 0.8.0) adds five indexes and nothing else:
+- `observations(recorded_at, id)`
+- `sources(identity)`
+- partial expression indexes on the optional observation fields
+  `correlation_id`, `occurred_at` and `severity` (`json_extract` over
+  `observations.data`)
+
+They serve the `blackboxd` event filters and keyset pagination. Creating an
+index rewrites no row, identifier, event or receipt. The upgrade appends only
+the `schema_metadata` and `schema_migrations` rows for version 5. The chain
+head is unchanged, and a migrated store is identical to a fresh v5 install.
+
+The new optional observation fields live inside the existing canonical
+`observations.data` JSON. An observation without them is stored byte-for-byte
+as before, so earlier request fingerprints, identifiers and receipts are
+unaffected: replaying a request recorded by 0.6.8 is a duplicate, not a
+conflict. The service normalizes `occurred_at` to six fraction digits so
+stored instants compare correctly as text.
+
+Released v4 code refuses a v5 store as an unsupported schema; there is no
+downgrade. A failed upgrade rolls back completely, and the store remains
+readable by the released v4 code.

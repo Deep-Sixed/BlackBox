@@ -413,3 +413,9 @@ def test_records_survive_a_crash_and_a_clean_restart(tmp_path):
     finally:
         process.kill()
         process.wait(10)
+
+
+def test_openapi_documents_every_route():
+    spec = (Path(__file__).parents[1] / "docs/openapi.yaml").read_text()
+    for route in (*daemon_module.ROUTES, "/api/v1/events"):
+        assert f"  {route}:" in spec, route

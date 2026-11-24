@@ -42,7 +42,7 @@ def test_supported_exports_are_deliberate():
         "BaseModel",
     ):
         assert name not in bb.__all__
-    assert bb.__version__ == "0.7.0"
+    assert bb.__version__ == "0.8.0"
 
 
 def test_typed_detached_results(database, request_data):
