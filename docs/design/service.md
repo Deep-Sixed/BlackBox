@@ -467,3 +467,28 @@ detected by `check --anchor`.
 
 **Plan for Friday:** option 3 (part of the D7 change). Options 1–2 go into the
 follow-up list.
+
+## 14. Release, implementation and deployment checkpoints
+
+These are three separate checkpoints. Passing one does not imply the next.
+
+1. **Baseline release: done.** `v0.7.0` is the reviewed pre-modernization
+   baseline. It is `main` at `571cfec` (PRs #32–#36 plus a version bump only)
+   and contains no `blackboxd` or API code.
+2. **Implementation: this branch.** The approved architecture is developed on
+   a feature branch (PR #37). The package version is `0.8.0.dev0`, which marks
+   it unreleased. The PR is not merged and no version is tagged until Phase 4
+   validation has passed. The release number is assigned at that checkpoint.
+3. **Production deployment: Phase 5.** It requires the release from
+   checkpoint 2, the reviewed deployment checklist, and your go-ahead.
+
+**Passing CI does not make BlackBox production-ready.** Readiness also requires
+these results from isolated integration on Friday (Phase 4):
+
+| Criterion | Evidence required |
+| --- | --- |
+| Isolated integration | A staging `blackboxd` running as `blackbox-svc` on a scratch database and test unit, with Flight Recorder and ContextBridge healthy before and after |
+| Authentication and authorization | Over the real socket on Friday: token + uid accepted; wrong token, wrong uid, missing scope and unreadable producer each refused; rotation and revocation by reload; a rootful Podman container granted access only as configured |
+| Backup and restore | `blackbox-backup` run as `blackbox-svc`; the copy verified; a full restore drill that passes `check --anchor`; `evecor-backup` (D7) picks up the copy, and a restic restore of it is byte-identical |
+| Service-account isolation | `flightrec-svc` and `jarvis` cannot open the database; `blackbox-svc` cannot write Flight Recorder storage; the daemon refuses to run as root; `systemd-analyze security` reviewed for the unit |
+| Unit hardening works | The hardened unit starts, serves, reloads and stops cleanly. Each directive that had to be relaxed is recorded with its reason. |
